@@ -1,0 +1,1033 @@
+update.reargraph <- function(object, show_legend=TRUE, size=15){
+    grobs <- object$grobs
+    a <- grobs[["a"]] +
+        theme(plot.title=element_text(size=size),
+              panel.background=element_rect(fill="gray95"))
+    b <- grobs[["b"]] +
+        theme(plot.title=element_text(size=size),
+              panel.background=element_rect(fill="gray95"))
+    ag <- ggplotGrob(a)
+    bg <- ggplotGrob(b)
+    bg$widths <- ag$widths
+    widths <- c(0.5, 0.5) %>%
+        "/"(sum(.)) %>%
+        unit(., "npc")
+    heights <- c(0.95, 0.05) %>%
+        "/"(sum(.)) %>%
+        unit(., "npc")
+    mat <- matrix(c(1, 2,
+                    3, 3), byrow=TRUE, ncol=2, nrow=2)
+    ##agrob <- grobs[["5p"]]
+    ##bgrob <- grobs[["3p"]]
+    if(show_legend){
+        legend.grob <- grobs[["legend"]]
+    } else{
+        legend.grob <- nullGrob()
+        heights[2] <- unit(0, "npc")
+    }
+    gobj <- arrangeGrob(ag, bg,
+                         legend.grob,
+                         layout_matrix=mat,
+                         widths=widths,
+                         heights=heights)
+    return(gobj)
+}
+
+jags_data <- function(gdat){
+    gdat <- gdat %>%
+        readRDS() %>%
+        as_tibble %>%
+        set_colnames(gsub(" ", "_", colnames(.))) %>%
+        set_colnames(gsub("\\.", "_", colnames(.))) %>%
+        set_colnames(tolower(colnames(.)))
+    ngenes <- length(levels(gdat$gene_symbol))
+    nid <- length(levels(gdat$internal_id))
+    ntumors <- gdat %>%
+        group_by(tumor_type) %>%
+        summarize(n=length(unique(internal_id)))
+    gdat2 <- gdat %>%
+        mutate(mutation=ifelse(!is.na(mutation), 1L, 0L),
+               methylation=ifelse(!is.na(methylation), 1L, 0L),
+               fusion=ifelse(!is.na(fusion), 1L, 0L),
+               copynumber=ifelse(!is.na(copynumber), 1L, 0L)) %>%
+        mutate(total=mutation+methylation+fusion+copynumber,
+               is_altered=ifelse(total > 0, 1L, 0L))%>%
+        select(gene_symbol, internal_id, tumor_type, is_altered) %>%
+        mutate(tumor_type=ifelse(tumor_type=="Ovarian endometrioid",
+                                 "ovarian",
+                                 "uterine"),
+               internal_id=as.character(internal_id),
+               gene_symbol=as.character(gene_symbol)) %>%
+        group_by(internal_id, gene_symbol) %>%
+        summarize(tumor_type=unique(tumor_type),
+                  number_altered=sum(is_altered),
+                  is_altered=as.integer(number_altered > 0),
+                  .groups="drop")
+    tumortype <- group_by(gdat2, internal_id) %>%
+        summarize(tumor_type=unique(tumor_type),
+                  .groups="drop")
+    gdat3 <- gdat2 %>%
+        select(gene_symbol, internal_id, is_altered) %>%
+        spread(gene_symbol, is_altered) %>%
+        left_join(tumortype, by="internal_id")
+    X <- select(ungroup(gdat3), -internal_id) %>%
+        select(-tumor_type) %>%
+        as.matrix()
+    Y <- ifelse(gdat3$tumor_type=="ovarian", 1, 0)
+    ##
+    ## exclude hypermutated samples
+    ##
+    is_hypermutator <- X[, "hypermutator"] == 1
+    X <- X[, -match("hypermutator", colnames(X))]
+    Y <- Y[ !is_hypermutator ]
+    X <- X[ !is_hypermutator, ]
+    ## require at least 3 variants
+    X <- X [, colSums(X) >= 3]
+    X <- cbind(1, X)
+    colnames(X)[1] <- "intercept"
+    list(X=X, Y=Y)
+}
+
+
+contingency_table <- function(x, Ns){
+    if(sum(x$number_altered) == 0) return(NULL)
+    m <- x %>%
+        mutate(tumor_type=as.character(tumor_type)) %>%
+        group_by(tumor_type, is_altered) %>%
+        summarize(n=n(),
+                  .groups="drop") %>%
+        pivot_wider(names_from="is_altered", values_from="n") %>%
+        set_colnames(c("tumor_type", "wt", "mt")) %>%
+        mutate(n=mt + wt)
+    m2 <- left_join(Ns, m, by=c("tumor_type", "n")) %>%
+        select(tumor_type, mt, n)
+    m2[is.na(m2)] <- 0
+    m <- select(m2, -tumor_type) %>%
+        as.matrix()
+    rownames(m) <- m2$tumor_type
+    m
+}
+
+stan_inputs <- function(ct){
+    ##ct = contingency table
+    y <- ct[, 1]
+    n <- ct[, 2]
+    J <- length(y)
+    ##
+    ## With 4 cancers, we need 3 dummy variables
+    ##  - first cancer will be the reference
+    X <- diag(4)
+    X <- X[, -1]
+    list(y=y, n=n, J=J, K=6, X=X) ##, X=0:3)
+}
+
+#' Create list of y, n, J, and x for stan
+#'
+#' @export
+inputs_endo <- function(ct){
+    ##ct = contingency table
+    y <- ct[1:2, 1]
+    n <- ct[1:2, 2]
+    J <- length(y)
+    ##
+    ## With 2 cancers, need 1 dummy variable
+    x <- c(0, 1)
+    list(y=y, n=n, J=J, x=x) ##, X=0:3)
+}
+
+#' Create list of y, n, J, and x for stan
+#'
+#' @export
+inputs_mucinous <- function(ct){
+    ##ct = contingency table
+    y <- ct[3:4, 1]
+    n <- ct[3:4, 2]
+    J <- length(y)
+    ##
+    ## With 2 cancers, need 1 dummy variable
+    x <- c(0, 1)
+    list(y=y, n=n, J=J, x=x)
+}
+
+sampling2 <- function(data, model, params, ...){
+    sampling(model,
+             data=data,
+             iter=params$iter,
+             thin=params$thin,
+             chains=params$chains,
+             warmup=params$warmup,
+             control=params$control, ...)
+}
+
+slice_params <- function(x){
+    nms <- rownames(x)
+    x %>%
+        as_tibble() %>%
+        mutate(parameter=nms) %>%
+        filter(grepl("^beta", parameter) |
+               grepl("^theta", parameter)) %>%
+        select(parameter, mean, se_mean, sd, `2.5%`,
+               `5%`, `50%`, `95%`, `97.5%`, `n_eff`, Rhat)
+}
+
+clean_names <- function(x){
+    x <- str_replace_all(x, " ", "_") %>%
+        tolower()
+    x
+}
+
+clean_colnames3 <- function(x){
+    nms <- colnames(x)
+    nms2 <- clean_names(nms)
+    x2 <- set_colnames(x, nms2)
+    x2
+}
+
+subject_id <- function(x){
+    x %>%
+        str_replace_all("_Ex", "") %>%
+        str_replace_all("_WGS", "") %>%
+        str_replace_all("T$", "") %>%
+        str_replace_all("T_hg18_A", "") %>%
+        str_replace_all("_WGS", "") %>%
+        ## CGST1 should stay CGST1
+        str_replace_all("([0-9])(T_[12])", "\\1") %>%
+        str_replace_all("([0-9])(T[12])", "\\1") %>%
+        str_replace_all(".mkdup", "") %>%
+        str_replace_all("^[tn]_", "") %>%
+        str_replace_all(".bam$", "") %>%
+        str_replace_all("_eland", "") %>%
+        str_replace_all(".final$", "") %>%
+        str_replace_all("[TN]$", "") %>%
+        str_replace_all("_Rep$", "") %>%
+        str_replace_all("_Rpt$", "") %>%
+        str_replace_all("T[be]$", "")
+}
+
+subject_id2 <- function(x){
+    x %>%
+        str_replace_all("N$", "") %>%
+        str_replace_all("T$", "") %>%
+        ## ST1 should stay ST1
+        str_replace_all("([0-9])(T[12])", "\\1")
+}
+
+find_bams <- function(pgdx_id, bamfiles){
+    ##for(i in seq_len(nrow(missing.bamfile))){
+    ##full.id <- missing.bamfile$pgdx_id[i]
+    full.id <- pgdx_id
+    abbrv.id <- full.id %>%
+        strsplit("_") %>%
+        "[["(1) %>%
+        "["(1)
+    index <- grep(abbrv.id, bamfiles)
+    if(length(index) == 1){
+        bamfile <- bamfiles[index]
+        return(bamfile)
+    }
+    ##missing.bamfile$bamfile[i] <- target[index]
+    ##      next()
+    ##}
+    ## remove suffix and search for a n_ or t_
+    lastchar <- substr(abbrv.id, nchar(abbrv.id),
+                       nchar(abbrv.id)) %>%
+        tolower()
+    nm.split <- strsplit(abbrv.id, "[NT]")[[1]]
+    abbrv.id2 <- nm.split[1]
+    ##numbers_only <- str_replace_all(abbrv.id, "[NT]^", "")
+    ##abbrv.id2 <- paste0(lastchar, "_", numbers_only)
+    index <- grep(abbrv.id2, bamfiles)
+    if(length(index) == 1){
+        bamfile <- bamfiles[index]
+        return(bamfile)
+    }
+    if(length(index)==0) return(NA)
+    ## more than one hit
+    is_normal <- grepl("N", abbrv.id)
+    tmp <- bamfiles[index]
+    if(is_normal){
+        x <- paste0("n_", abbrv.id2)
+        bamfile <- tmp[grep(x, tmp)]
+    } else {
+        ##x <- paste0("t_", abbrv.id2)
+        bamfile <- tmp[grep("t_", tmp)]
+    }
+    if(length(bamfile) == 1) return(bamfile)
+    if(length(bamfile) > 1){
+        bamfile <- bamfile[grep(abbrv.id, bamfile)]
+    }
+    if(length(bamfile)==1)  return(bamfile)
+    return(NA)
+}
+
+find_bam2 <- function(pgdx_id, bamfile){
+    ix <- grep(pgdx_id, bamfile)
+    if(length(ix) == 1){
+        return(bamfile[ix])
+    }
+    abbrv <- strsplit(pgdx_id, "_")[[1]][1]
+    ix <- grep(abbrv, bamfile)
+    if(length(ix) == 1){
+        return(bamfile[ix])
+    }
+    abbrv2 <- str_replace_all(abbrv, "[TN]$", "")
+    ix <- grep(abbrv2, bamfile)
+    if(length(ix) == 1){
+        return(bamfile[ix])
+    }
+    if(length(ix)==2){
+        bams <- bamfile[ix]
+        is_normal <- substr(abbrv, nchar(abbrv), nchar(abbrv)) == "N"
+        if(is_normal){
+            ix <- grep("n_", basename(bams))
+        } else {
+            ix <- grep("t_", basename(bams))
+        }
+        bamfile <- bams[ix]
+        return(bamfile)
+    }
+    NA
+}
+
+clean_colnames <- function(x){
+    nms <- colnames(x)
+    nms2 <- nms %>%
+        tolower(.) %>%
+        str_replace_all(., "(\\.)\\1+", "_") %>%
+        str_replace_all(., "\\.", "_") %>%
+        str_replace_all(., "_$", "")
+    colnames(x) <- nms2
+    x  <- x %>%
+        rename(years=years_from_diagnosis,
+               overall_survival=overall_survival_status_0_alive_1_dead,
+               histology=histological_tumor_type) %>%
+        mutate(histology=str_replace_all(histology, "ovarian", "Ovarian"))
+    x
+}
+
+clean_colnames2 <- function(x){
+    cnms <- colnames(x) %>%
+        str_replace_all(" ", "_") %>%
+        tolower()
+    colnames(x) <- cnms
+    x
+}
+
+format_number <- function(type, x){
+    n <- x$n[x$tumor_type %in% type] %>%
+        sum()
+    Ns <- paste0("(n=", n, ")")
+    labels <- paste(type, collapse=",")
+    names(Ns) <- labels
+    Ns
+}
+
+remove_author <- function(x) {
+    ## identify empty author line
+    i <- grep("^\\\\author\\{\\}$", x)
+    ## be sure it is the one pandoc inserts
+    if(length(i) != 0 && grepl('^\\\\date\\{', x[i+1])) x <- x[-i]
+
+    ## default puts thanks on the title
+    i <- grep("^\\\\title", x)
+    line <- "\\title{Genomic landscapes of endometrioid and mucinous ovarian cancers and morphologically similar tumor types}"
+    if(length(i) != 0 ) x[i] <- line
+    ## put thanks on Velculescu and Scharpf
+    i <- grep("Velculescu", x)
+    line <- x[i]
+    line <- stringr::str_replace(line, "Velculescu", "Velculescu \\\\thanks{To whom correspondence should be addressed: velculescu@jhmi.edu (V.E.V.) and rscharpf@jhu.edu (R.B.S.)}")
+    x[i] <- line
+    ##i <- grep("\dagger", x)
+    ##line <- x[i]
+    ##line <- str_replace(line, "\\\\dagger", "*")
+    ##x[i] <- line
+    x
+}
+
+grep_bamfile <- function(i, manifest, tofix){
+    ##id <- tofix$stripped_name[i]
+    id <- tofix$prev_id[i]
+    index <- grep(id, manifest$stripped_name)
+    if(length(index)==0) return(manifest[index, ])
+    if(length(index) > 1) browser()
+    manifest <- manifest[index, ] %>%
+        mutate(prev_id=id) %>%
+        ungroup() %>%
+        select(lab_id, prev_id)
+    return(manifest)
+}
+
+#' Make repairs to lab ids
+#'
+#' @param tofix:  a single column labeled lab_id
+#' @param manifest: patient manifest
+#' @return a two column tibble with lab_id and prev_id
+repair_lab_id <- function(tofix, manifest, strip_Ex=FALSE){
+    alt0 <- filter(tofix, lab_id %in% manifest$lab_id)
+    alt1 <- filter(tofix, !lab_id %in% manifest$lab_id)
+    if(!strip_Ex){
+        tofix <- tibble(prev_id=unique(alt1$lab_id))
+    } else{
+        tofix <- tibble(prev_id=unique(alt1$lab_id)) %>%
+            mutate(prev_id=str_replace_all(prev_id, "_Ex$", ""))
+    }
+    ##mutate(stripped_name=str_replace_all(id, "_WGS_Ex", ""),
+    ##stripped_name=str_replace_all(stripped_name, "_WGS", ""))
+    stripped.manifest <- manifest %>%
+        mutate(x=str_replace_all(basename(bam_local),
+                                 ".bam", ""),
+               x=str_replace_all(x, ".clean", ""),
+               x=str_replace_all(x, ".mkdup", ""),
+               x=str_replace_all(x, ".fxmt", "")) %>%
+        rename(stripped_name=x) %>%
+        mutate(bam_local=basename(bam_local)) %>%
+        select(subject_id, lab_id, stripped_name,
+               bam_local, tumor.normal) %>%
+        filter(tumor.normal=="tumor")
+    possible_matches <- seq_len(nrow(tofix)) %>%
+        map_dfr(grep_bamfile, manifest=stripped.manifest,
+                tofix=tofix)
+    corrected <- tofix %>%
+        ##rename(prev_id=id) %>%
+        left_join(possible_matches, by="prev_id") %>%
+        ##rename(prev_id=id) %>%
+        select(lab_id, prev_id)
+    ##alt1.updated <- alt1 %>%
+    alt1.updated <- tofix %>%
+        ##rename(prev_id=lab_id) %>%
+        left_join(corrected, by="prev_id") %>%
+        select(lab_id, prev_id)
+    if(strip_Ex){
+        alt1.updated$prev_id <- paste0(alt1.updated$prev_id, "_Ex")
+    }
+    alt0$prev_id <- alt0$lab_id
+    alt3 <- bind_rows(alt0, alt1.updated)
+    alt3
+}
+
+tile_theme <- function(){
+    theme(axis.title=element_blank(),
+          strip.placement="outside",
+          panel.grid=element_blank(),
+          axis.ticks.x=element_blank(),
+          axis.text.x=element_text(angle=90, hjust=1, vjust=0.5),
+          panel.background=element_rect(fill="white"),
+          legend.background=element_rect(fill="white"),
+          axis.line = element_blank(),
+          strip.text=element_text(size=9,
+                                  hjust=0.5,
+                                  vjust=0.5),
+          strip.text.y.left=element_text(angle=0,
+                                         size=11),
+          strip.background=element_rect(fill="grey88",
+                                        color = "grey88"),
+          panel.spacing.x = unit(1,"lines"))
+}
+
+
+suppl5_varnames <- function(s5){
+    orignames <- colnames(s5)
+    varnames <- clean_names(orignames)
+    varnames[c(8, 9, 13, 14, 15,
+               16:19)] <- c("olap_snps",
+                            "olap_het_snps",
+                            "cnv_type",
+                            "loh",
+                            "focal",
+                            "clin_gene",
+                            "biol_gene",
+                            "olap_gene",
+                            "olap_tx")
+    varnames
+}
+
+order_samples <- function(x, gene.levels){
+    x2 <- select(x, lab_id, gene_symbol) %>%
+        mutate(hypermutator=gene_symbol=="hypermutator",
+               gene1.alt=gene_symbol==gene.levels[1],
+               gene2.alt=gene_symbol==gene.levels[2],
+               gene3.alt=gene_symbol==gene.levels[3],
+               gene4.alt=gene_symbol==gene.levels[4],
+               gene5.alt=gene_symbol==gene.levels[5]) %>%
+        group_by(lab_id) %>%
+        summarize(hypermut=any(hypermutator),
+                  gene1=any(gene1.alt),
+                  gene2=any(gene2.alt),
+                  gene3=any(gene3.alt),
+                  gene4=any(gene4.alt),
+                  gene5=any(gene5.alt))
+    x3 <- x2 %>%
+        arrange(hypermut,
+                -gene1,
+                -gene2,
+                -gene3,
+                -gene4,
+                -gene5)
+    x3
+}
+
+manifest_tumors <- function(manifest, tumor.levels){
+    ##manifest <- here("output", "03-manifest.rmd",
+    ##                 "manifest.rds") %>%
+    ##    readRDS() %>%
+    manifest <- manifest %>%
+        ungroup() %>%
+        mutate(tumor_type=Hmisc::capitalize(tumor_type),
+               tumor_type=case_when(tumor_type=="Colorectal"~"Colorectal mucinous",
+                                    tumor_type=="Pancreas"~"Pancreas mucinous",
+                                    tumor_type=="Stomach"~"Stomach mucinous",
+                                    TRUE~tumor_type)) %>%
+        filter(tumor_type %in% tumor.levels,
+               tumor.normal=="tumor")
+    manifest
+}
+
+read_pathways <- function(tumor.type){
+    pathways <- here("output", "gene_pathway.rmd",
+                     "gene_pathway.csv") %>%
+        read_csv(show_col_types=FALSE) %>%
+        rename(gene_symbol=gene.symbol) %>%
+        filter(tumor_type==tumor.type) %>%
+        select(-tumor_type) %>%
+        mutate(pathway=str_replace_all(pathway,
+                                       "TGFBR pathway",
+                                       "TGFBR"),
+               pathway=str_replace_all(pathway, "BRCA",
+                                       "DNA repair"))
+}
+
+read_integrated_data <- function(manifest, pathways){
+    ##manifest <- read_manifest(tumor.levels)
+    tumortypes <- select(manifest, lab_id, tumor_type) %>%
+        ungroup() %>%
+        distinct()
+    idat <- here("output", "01-data_integration.rmd",
+                 "integrated_data.rds") %>%
+        readRDS() %>%
+        mutate(gene_symbol=gene) %>%
+        filter(lab_id %in% manifest$lab_id) %>%
+        left_join(pathways, by="gene_symbol") %>%
+        left_join(tumortypes, by="lab_id") %>%
+        distinct()
+    idat
+}
+
+axis.labels <- function(ord_in, signif.digits=1){
+    exp_var <- 100 * ord_in$svd^2 / sum(ord_in$svd^2)
+    axes <- paste0("LD", 1:2)
+    axes <- paste0(axes, ' (', round(exp_var, signif.digits), '%)')
+    axes
+}
+
+my.ggord.lda <- function(ord_in, grp_in = NULL,
+                         axes = c('1', '2'), ...){
+    obs <- data.frame(predict(ord_in)$x[, c("LD1", "LD2")]) %>%
+        as_tibble() %>%
+        mutate(lab="TCGA")
+    obs$Groups <- as.character(grp_in)
+    obs
+}
+
+my.ellipse <- function(obs){
+    theta <- c(seq(-pi, pi, length = 50), seq(pi, -pi, length = 50))
+    circle <- cbind(cos(theta), sin(theta))
+    ellipse_pro <- 0.95
+    ell <- plyr::ddply(obs, 'Groups', function(x) {
+        if(nrow(x) <= 2) {
+            return(NULL)
+        }
+        sigma <- var(cbind(x$LD1, x$LD2))
+        mu <- c(mean(x$LD1), mean(x$LD2))
+        ed <- sqrt(qchisq(ellipse_pro, df = 2))
+        data.frame(sweep(circle %*% chol(sigma) * ed, 2, mu, FUN = '+')) %>%
+            as_tibble()
+    })
+    names(ell)[2:3] <- names(obs)[1:2]
+    ## get convex hull for ell object, this is a hack to make it work with geom_polygon
+    . <- plyr::.
+    ell <- plyr::ddply(ell, .(Groups), function(x) x[chull(x$LD1, x$LD2), ])
+    ell <- as_tibble(ell)
+}
+
+project.cancer <- function(se.jhu, pc.tcga, ld.tcga, cancertype, use_pcs=1:5){
+    se.jhu2 <- se.jhu[, se.jhu$diagnosis==cancertype]
+    jhu.meth <- assays(se.jhu2)[[1]] %>%
+        t()
+    jhu.pcs <- predict(pc.tcga, newdata=jhu.meth) %>%
+        as_tibble() %>%
+        select(paste0("PC", use_pcs)) %>%
+        mutate(dx=se.jhu2$diagnosis)
+    ## 2. Using the LDA classifier, make predictions on the JHU study
+    jhu.class.predictions <- predict(ld.tcga, newdata=jhu.pcs)
+    jhu.x <- jhu.class.predictions$x[, c("LD1", "LD2")] %>%
+        as_tibble() %>%
+        mutate(dx=as.character(se.jhu2$diagnosis),
+               tumor=factor(se.jhu2$tumor, c("Normal", "Tumor"))) %>%
+        rename(Groups=dx,
+               tumor.normal=tumor) %>%
+        mutate(lab="JHU")
+    jhu.x
+}
+
+#' Wrapper for principal component analysis of SummarizedExperiment object
+#'
+#' @export
+mypca <- function(se, scale=FALSE, center=TRUE, rk){
+    x <- t(assays(se)[[1]])
+    prcomp(x, scale=scale, center=center, rank.=rk)
+}
+
+## temporary -- to delete
+collect_sampleinfo <- function(manifest, path){
+    ##samps <- samps[c(1:8,11:15,18:45)]
+    ##tmp <- list.files(dbruhm)[c(1:8,11:15,18:45)]
+    ids <- manifest %>%
+        mutate(path=path) %>%
+        mutate(path=file.path(path, ".temp", vendor_id),
+               rearfile=file.path(path,
+                                  paste0(vendor_id, ".rearlist-final.rds")),
+               ampfile=file.path(path,
+                                 paste0(".unfiltered_amplicons.rds")),
+               delfile=file.path(path,
+                                 paste0(".unfiltered_deletions.rds")),
+               segfile=file.path(path,
+                                 paste0(".segments.rds")))
+    ids
+}
+
+
+get_manifest <- function(samps){
+    ids <- tibble(vendor_id=basename(samps),
+                  lab_id=c("CGOV353T","CGOV354T","CGOV358T","CGOV359T",
+                           "CGOV362T","CGOV365T","CGOV369T",
+                           "CGOV375T","CGOV291T","CGOV292T",
+                           "CGOV293T","CGOV295T","CGOV296T","CGOV127T",
+                           "CGOV131T","CGOV136T","CGOV138T",
+                           "CGOV139T","CGOV140T","CGOV141T","CGOV142T",
+                           "CGOV170T","CGOV172T","CGOV173T","CGOV174T",
+                           "CGOV176T","CGOV155T","CGOV159T",
+                           "CGOV159T_3","CGOV144T","CGOV145T","CGOV145T_1",
+                           "CGOV147T","CGOV148T","CGOV154T",
+                           "CGOV157T","CGOV160T","CGOV160T_1","CGOV160T_2",
+                           "CGOV161T","CGOV162T"
+                           ),
+                  subtypes=c("ovarian endometrioid",
+                             "ovarian endometrioid","ovarian endometrioid",
+                             "ovarian endometrioid","ovarian endometrioid",
+                             "ovarian endometrioid",
+                             "ovarian endometrioid",
+                             "ovarian mucinous",
+                             "ovarian endometrioid",
+                             "ovarian endometrioid",
+                             "ovarian endometrioid",
+                             "ovarian endometrioid",
+                             "ovarian endometrioid",
+                             "ovarian endometrioid","ovarian endometrioid",
+                             "ovarian endometrioid",
+                             "ovarian endometrioid","ovarian endometrioid",
+                             "ovarian endometrioid",
+                             "ovarian endometrioid","ovarian endometrioid",
+                             "ovarian mucinous","ovarian endometrioid",
+                             "ovarian mucinous",
+                             "ovarian mucinous","ovarian endometrioid",
+                             "colorectal","colorectal",
+                             "colorectal","ovarian mucinous",
+                             "ovarian endometrioid","ovarian endometrioid",
+                             "ovarian mucinous","ovarian mucinous",
+                             "ovarian endometrioid",
+                             "ovarian endometrioid","ovarian endometrioid",
+                             "ovarian endometrioid",
+                             "ovarian endometrioid","ovarian endometrioid",
+                             "ovarian endometrioid"))
+    ids
+}
+
+#' Standardize pgdx identifiers
+#'
+#' @export
+#' @param dat:  a tibble with pgdx_id and subject_id field
+standardize_pgdx <- function(dat){
+    two.ids <- dat %>%
+        mutate(two.ids=grepl("_Ex_PGDX", pgdx_id)) %>%
+        filter(two.ids) %>%
+        mutate(orig_id=pgdx_id) %>%
+        mutate(pgdx_id2=str_replace_all(pgdx_id, "^[tn]_", ""),
+               pgdx_id2=str_replace_all(pgdx_id2, "_Ex.mkdup.bam", ""),
+               pgdx_id2=str_replace_all(pgdx_id2, "_Ex", "")) %>%
+        mutate(id1=sapply(strsplit(pgdx_id2, "_"), "[", 1),
+               id2=sapply(strsplit(pgdx_id2, "_"), "[", 2)) %>%
+        mutate(pgdx_id=ifelse(tumor.normal=="tumor", id2, id1)) %>%
+        select(-c(orig_id, id1, id2, pgdx_id2))
+    dat2 <- filter(dat, !grepl("_Ex_PGDX", pgdx_id)) %>%
+        bind_rows(two.ids) %>%
+        mutate(pgdx_id=str_replace_all(pgdx_id, "_WGS_Ex", ""),
+               pgdx_id=str_replace_all(pgdx_id, "_$", ""),
+               pgdx_id=str_replace_all(pgdx_id, "_Ex$", ""),
+               pgdx_id=str_replace_all(pgdx_id, "_Ex_hg19", ""))
+    ## Remove n_ t_
+    temp <- filter(dat2, !is.na(pgdx_id)) %>%
+        mutate(pgdx_id=str_replace_all(pgdx_id, "^[tn]_", ""),
+               pgdx_id=str_replace_all(pgdx_id, ".mkdup.bam", ""),
+               pgdx_id=str_replace_all(pgdx_id, "_Ex", ""),
+               pgdx_id=paste0(pgdx_id, "_", platform),
+               pgdx_id=str_replace_all(pgdx_id, "_WES", "_Ex"))
+    dat3 <- filter(dat2, is.na(pgdx_id)) %>%
+        bind_rows(temp)
+    return(dat3)
+}
+
+#' Standardize pgdx identifiers
+#'
+#' @param dat:  a tibble with pgdx_id and subject_id field
+standardize_pgdx2 <- function(dat){
+    two.ids <- dat %>%
+        mutate(two.ids=grepl("_Ex_PGDX", pgdx_id)) %>%
+        filter(two.ids) %>%
+        mutate(orig_id=pgdx_id) %>%
+        mutate(pgdx_id2=str_replace_all(pgdx_id, "^[tn]_", ""),
+               pgdx_id2=str_replace_all(pgdx_id2, "_Ex.mkdup.bam", ""),
+               pgdx_id2=str_replace_all(pgdx_id2, "_Ex", "")) %>%
+        mutate(id1=sapply(strsplit(pgdx_id2, "_"), "[", 1),
+               id2=sapply(strsplit(pgdx_id2, "_"), "[", 2)) %>%
+        mutate(pgdx_id=ifelse(tumor.normal=="tumor", id2, id1)) %>%
+        select(-c(orig_id, id1, id2, pgdx_id2))
+    dat2 <- filter(dat, !grepl("_Ex_PGDX", pgdx_id)) %>%
+        bind_rows(two.ids) %>%
+        mutate(pgdx_id=str_replace_all(pgdx_id, "_WGS_Ex", ""),
+               pgdx_id=str_replace_all(pgdx_id, "_$", ""),
+               pgdx_id=str_replace_all(pgdx_id, "_Ex$", ""),
+               pgdx_id=str_replace_all(pgdx_id, "_Ex_hg19", ""),
+               pgdx_id=str_replace_all(pgdx_id, " $", "")) %>%
+        select(-two.ids) %>%
+        unite(pgdx_id2, c(pgdx_id, platform), sep="_") %>%
+        mutate(pgdx_id=str_replace_all(pgdx_id2, "WES$", "Ex")) %>%
+        select(-pgdx_id2)
+    return(dat2)
+}
+
+#' @export
+fig1_ggplatform <- function(i, x, base_size=15, colors, cancer){
+    dat <- x %>%
+        mutate(platform=case_when(platform=="Methylation"~"Me",
+                                  ##platform=="Survival"~"Surv",
+                                  TRUE~platform),
+               platform=factor(platform,
+                               levels=c("WGS", "WES",
+                                        "Me"))) ##, "Surv")))
+    orderby <- dat %>%
+        group_by(subject_id) %>%
+        ##group_by(genotype_id) %>%
+        summarize(nplatform=length(unique(platform)),
+                  tumor.normal=sum(tumor.normal=="normal,tumor"),
+                  nwgs=sum(platform=="WGS")) %>%
+        arrange(nplatform, tumor.normal, nwgs)
+    dat2  <- dat %>%
+        mutate(subject_id=factor(subject_id, orderby$subject_id))
+    fig <- dat2 %>%
+        ggplot(aes(platform, subject_id)) +
+        geom_point(aes(fill=matched),
+                   pch=21, size=4) +
+        theme_bw(base_size=base_size) +
+        theme(panel.grid=element_blank(),
+              axis.text.x=element_text(angle=45, hjust=1)) +
+        scale_x_discrete(drop=FALSE) +
+        xlab("") +
+        ylab("") +
+        guides(fill=guide_legend(title="")) +
+        scale_fill_manual(values=colors,
+                          drop=FALSE) +
+        ggtitle(cancer[i])
+    leg <- cowplot::get_legend(fig)
+    fig2 <- fig + guides(fill="none")
+    result <- list(figure=fig2, legend=leg)
+    result
+}
+
+find_group_samples <- function(sample_id, connection_matrix) {
+
+    group_samples <- c()
+    check_samples <- sample_id
+
+    while(length(check_samples) != 0) {
+        for (check_sample_id in check_samples) {
+            if(!(check_sample_id %in% group_samples)) {
+                group_samples <- c(group_samples, check_sample_id)
+                local_samples <- names(which(connection_matrix[check_sample_id,] == 1))
+                check_samples <- setdiff(c(check_samples, local_samples), group_samples)
+            }
+        }
+    }
+    return(group_samples)
+}
+
+
+.ggRearrange2 <- function(df, ylabel="Read pair index",
+                         basepairs=400, num.ticks=5){
+  colors <- trellis:::readColors()[unique(df$read_type)]
+  colors["splitread"] <- "black"
+  nms <- names(trellis:::readColors())
+  df$read_type <- factor(df$read_type, levels=nms)
+  region <- read_type <- tagid <- NULL
+  df1 <- filter(df, region==levels(region)[1])
+  df2 <- filter(df, region==levels(region)[2])
+  limits <- axis_limits(df, basepairs)
+  gene1 <- levels(df$region)[1]
+  gene2 <- levels(df$region)[2]
+  xlim1 <- limits[[gene1]]
+  xlim2 <- limits[[gene2]]
+  labs1 <- trellis:::axis_labels5p(df1, xlim1, num.ticks)
+  labs2 <- trellis:::axis_labels3p(df2, xlim2, num.ticks)
+  a <- ggplot(df1, aes(ymin=tagid-0.2,
+                       ymax=tagid+0.2,
+                       xmin=start,
+                       xmax=end,
+                       color=read_type,
+                       fill=read_type, group=tagid)) +
+    geom_rect() +
+    ylab(ylabel) +
+    scale_fill_manual(values=colors) +
+    scale_color_manual(values=colors) +
+    scale_x_continuous(breaks=labs1[["breaks"]],
+                       labels=labs1[["labels"]]) +
+    coord_cartesian(xlim=xlim1) +
+    xlab("") +
+    theme(axis.text.x=element_text(size=7, angle=45, hjust=1),
+          axis.text.y=element_blank(),
+          plot.title=element_text(size=5)) +
+    guides(color=FALSE, fill=FALSE) +
+    geom_vline(xintercept=df$junction_5p[1], linetype="dashed") +
+    ggtitle(paste0(df1$region[1], " (", df1$seqnames[1], ")"))
+  if(df1$reverse[1]){
+    a <- a + scale_x_reverse(breaks=labs1[["breaks"]],
+                             labels=labs1[["labels"]])
+  }
+  b <- ggplot(df2, aes(ymin=tagid-0.2,
+                       ymax=tagid+0.2,
+                       xmin=start,
+                       xmax=end,
+                       color=read_type,
+                       fill=read_type, group=tagid)) +
+    geom_rect() +
+    ylab("read pair index") +
+    scale_fill_manual(values=colors) +
+    scale_color_manual(values=colors) +
+    scale_x_continuous(breaks=labs2[["breaks"]],
+                       labels=labs2[["labels"]]) +
+    coord_cartesian(xlim=xlim2) +
+    xlab("") +
+    theme(axis.text.x=element_text(size=7, angle=45, hjust=1),
+          axis.text.y=element_blank(),
+          axis.ticks.y=element_blank(),
+          legend.position="bottom",
+          legend.direction="horizontal",
+          plot.title=element_text(size=5)) +
+    guides(color=FALSE, fill=FALSE) +
+    geom_vline(xintercept=df$junction_3p[1], linetype="dashed") +
+    ylab("") +
+    ggtitle(paste0(df2$region[1], " (", df2$seqnames[1], ")"))
+  if(df2$reverse[1]){
+    b <- b + scale_x_reverse(breaks=labs2[["breaks"]],
+                             labels=labs2[["labels"]])
+  }
+  ##
+  ## plot both panels just to get the legend
+  d <- ggplot(df, aes(ymin=tagid-0.2,
+                      ymax=tagid+0.2,
+                      xmin=start,
+                      xmax=end,
+                      color=read_type,
+                      fill=read_type, group=tagid)) +
+    geom_rect() +
+    scale_fill_manual(values=colors) +
+    scale_color_manual(values=colors) +
+    theme(legend.position="bottom", legend.direction="horizontal") +
+    guides(color=guide_legend(title=""), fill=guide_legend(title=""))
+  legend.grob <- trellis:::peelLegend(d)[[2]]
+  agrob <- ggplotGrob(a)
+  bgrob <- ggplotGrob(b)
+  ##legend.grob <- gg.objs[[2]]
+  bgrob$widths <- agrob$widths
+  list(a=a,
+       b=b,
+       `5p`=agrob,
+       `3p`=bgrob,
+       legend=legend.grob)
+}
+
+#' Used in 06.1-figure3.rmd to create amplicon graphs
+#'
+#' This is a modification to functions with same name (but without '2' postfix) in svplots package.  Instead of returning just a list of grobs, the modification returns both the grobs and the ggplot objects.  This allows for further modification of the ggplot objects prior to creating grobs for the manuscript figure.
+#' @export
+ggRearrange2 <- function(df, ylab="Read pair index",
+                        basepairs=400, num.ticks=5){
+    . <- NULL
+    grobs <- .ggRearrange2(df, ylabel=ylab,  basepairs, num.ticks)
+    widths <- c(0.5, 0.5) %>%
+        "/"(sum(.)) %>%
+        unit(., "npc")
+    heights <- c(0.95, 0.05) %>%
+        "/"(sum(.)) %>%
+        unit(., "npc")
+    mat <- matrix(c(1, 2,
+                    3, 3), byrow=TRUE, ncol=2, nrow=2)
+    agrob <- grobs[["5p"]]
+    bgrob <- grobs[["3p"]]
+    legend.grob <- grobs[["legend"]]
+    gobj <- arrangeGrob(agrob, bgrob,
+                        legend.grob,
+                        layout_matrix=mat,
+                        widths=widths,
+                        heights=heights)
+    list(arranged.grobs=gobj,
+         grobs=grobs)
+}
+
+#' Provides full names for cancer subtypes
+#'
+#' @export
+cancer_names <- function(x){
+    x2 <- x %>%
+        mutate(tumor=Hmisc::capitalize(tumor_type))
+    x3 <- x2 %>%
+        mutate(tumor=case_when(tumor=="Colorectal"~"Colorectal mucinous",
+                               tumor=="Pancreas"~"Pancreas mucinous",
+                               tumor=="Stomach"~"Stomach mucinous",
+                               TRUE~tumor))
+    x3
+}
+
+#' Provide mucinous cancers
+#'
+#' @export
+muc <- function() c("Colorectal mucinous", "Ovarian mucinous", "Pancreaas mucinous", "Stomach mucinous")
+
+#' Provide endometrioid/endometrial cancers
+#'
+#' @export
+endo <- function() c("Ovarian endometrioid", "Uterine endometrial")
+
+tumor_normal_matrix <- function(x){
+    x.nested <- x %>%
+        group_by(subject_id) %>%
+        nest()
+    nr <- map_int(x.nested$data, nrow)
+    if(length(nr) < 4) return(NULL)
+    x.nested2 <- x.nested[nr==2, ]
+    x.nested2$data %>%
+        map_dfr(function(x) x) %>%
+        pull(propmeth) %>%
+        matrix(nc=2, byrow=TRUE)
+}
+
+#' @export
+pairedMeth <- function(methprop, manifest){
+    ## comparison to matched normal for each tumor type
+    manifest2 <- manifest %>%
+        select(subject_id, lab_id, tumor_type,
+               tumor.normal) %>%
+        distinct()
+    tumors <- filter(manifest, tumor.normal=="tumor")
+    tumortypes <- tumors %>%
+        select(subject_id, lab_id, tumor_type) %>%
+        ungroup() %>%
+        distinct()
+    tt <- select(tumortypes, -lab_id) %>%
+        distinct()
+    meth2 <- methprop %>%
+        select(Sample_Name, propmeth) %>%
+        rename(lab_id=Sample_Name) %>%
+        left_join(manifest2,
+                  join_by(lab_id)) %>%
+        select(-tumor_type) %>%
+        left_join(tt, by="subject_id") %>%
+        group_by(tumor_type) %>%
+        nest()
+    meth.matrix.list <- meth2$data %>%
+        map(tumor_normal_matrix)
+    nr <- sapply(meth.matrix.list, length)
+    meth.matrix.list2 <- meth.matrix.list[nr > 0]
+    meth.matrix.list2
+}
+
+#' Accessor for beta values of methylation SummarizedExperiment
+#' @export
+beta <- function(se) assays(se)[["beta"]]
+
+
+#' Use consistent color scheme for cancer subtypes
+#'
+#' @export
+tumor_colors <- function(){
+    dx.colors <- c("Uterine endometrial" = "#DDCC7F",
+                   "Ovarian endometrioid" = "#0F7554",
+                   "Ovarian mucinous" = "#44AA99",
+                   "Colorectal mucinous" = "#882255",
+                   "Pancreas mucinous" = "#AA4499",
+                   "Stomach mucinous" = "#D695D0")
+}
+
+#' Create contingency table for comparing differences in mutation rates
+#'
+#' @export
+complete_table <- function(x, Ns, tumor_order){
+    x2 <- full_join(Ns, x, by=c("tumor_type", "n"))
+    x2[is.na(x2)] <- 0L
+    x3 <- select(x2, tumor_type, mt, n)
+    x4 <- left_join(tumor_order, x3, by="tumor_type")
+    x5 <- as.matrix(x4[, 2:3])
+    rownames(x5) <- x4$tumor_type
+    x5
+}
+
+#' Stan output
+#'
+#' @export
+stan_output <- function(data.list, model,
+                        params,
+                        summaryfun,
+                        probs=c(0.025, 0.05, 0.1,
+                                0.5, 0.9, 0.95,
+                                0.975)){
+    tmp <- data.list %>%
+        map(sampling2, model, params) %>%
+        map(summaryfun, probs=probs) %>%
+        map(1) %>%
+        map(slice_params)
+    ##%>%
+    ##map(function(x) x[1, ])
+    return(tmp)
+}
+
+#' Label Pancreas, Stomach, and Colorectal mucinous cancers as GI mucinous
+#'
+#' @export
+collapse_gi <- function(dat){
+    dat2  <- dat %>%
+        mutate(tumor_type=as.character(tumor_type)) %>%
+        mutate(tumor_type=case_when(tumor_type=="Pancreas mucinous"~"GI mucinous",
+                                    tumor_type=="Stomach mucinous"~"GI mucinous",
+                                    tumor_type=="Colorectal mucinous"~"GI mucinous",
+                                    TRUE~tumor_type))
+    dat2
+}
+
+#' x contains lab_id
+#' manifest contains lab_id and lab_id2
+#' replace lab_id with lab_id2 when not equal
+#' @export
+swap_lab_id <- function(x, y){
+    y <- select(y, lab_id, lab_id2)
+    isf <- is.factor(x$lab_id)
+    if(isf){
+        levs <- tibble(lab_id=levels(x$lab_id)) %>%
+            inner_join(y, by="lab_id")
+        levs2 <- levs$lab_id2
+    }
+    x.y <- inner_join(x, y, by="lab_id") %>%
+        mutate(lab_id=ifelse(lab_id==lab_id2, lab_id, lab_id2)) %>%
+        select(-lab_id2)
+    if(isf){
+        x.y$lab_id <- factor(x.y$lab_id, levs2)
+    }
+    return(x.y)
+}
