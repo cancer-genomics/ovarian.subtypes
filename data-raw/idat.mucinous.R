@@ -159,4 +159,4 @@ idat2$gene <- factor(idat2$gene, gene.levels)
 
 idat.mucinous <- idat2
 save(idat.mucinous,
-     file=here("Rpackage/ovarian.subtypes/data/idat.mucinous.rda"))
+     file=here("../ovarian.subtypes/data/idat.mucinous.rda"))
