@@ -127,7 +127,6 @@ idat2$lab_id <- factor(idat2$lab_id, id.levels)
 
 idat.endometrioid <- idat2
 save(idat.endometrioid,
-     file=here("Rpackage",
-               "ovarian.subtypes",
+     file=here("ovarian.subtypes",
                "data",
                "idat.endometrioid.rda"))

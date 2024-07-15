@@ -44,4 +44,4 @@ idat <- here("output", "05-data_integration.rmd",
     rename(tumor_type=tumor)
 idat.gi <- idat
 save(idat.gi,
-     file=here("Rpackage/ovarian.subtypes/data/idat.gi.rda"))
+     file=here("../ovarian.subtypes/data/idat.gi.rda"))
