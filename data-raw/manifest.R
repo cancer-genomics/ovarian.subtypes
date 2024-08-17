@@ -2,8 +2,7 @@ library(here)
 library(tidyverse)
 library(lubridate)
 library(magrittr)
-manifest <- here("..", "ovarian.internals",
-                 "output", "03-manifest.rmd",
+manifest <- here("inst", "extdata", 
                  "manifest.rds") %>%
     readRDS()
 ##
@@ -62,7 +61,7 @@ clinical.data <- manifest2 %>%
     mutate(discordant_tumor_type=FALSE) %>%
     clinical_data() %>%
     rename(subject_id=subject_id2)
-sdat <- readRDS("extdata/sdat.rds") %>%
+sdat <- readRDS("inst/extdata/sdat.rds") %>%
     as_tibble()
 varnames <- tolower(colnames(sdat)) %>%
     str_replace_all("([\\.])\\1+", ".") %>%
