@@ -290,6 +290,7 @@ find_bam2 <- function(pgdx_id, bamfile){
 }
 
 clean_colnames <- function(x){
+    rename <- dplyr::rename
     nms <- colnames(x)
     nms2 <- nms %>%
         tolower(.) %>%
@@ -482,10 +483,9 @@ manifest_tumors <- function(manifest, tumor.levels){
     manifest
 }
 
-read_pathways <- function(tumor.type){
-    pathways <- here("output", "gene_pathway.rmd",
-                     "gene_pathway.csv") %>%
-        read_csv(show_col_types=FALSE) %>%
+read_pathways <- function(pathway.file, tumor.type){
+    rename <- dplyr::rename
+    pathways <- read_csv(pathway.file, show_col_types=FALSE) %>%
         rename(gene_symbol=gene.symbol) %>%
         filter(tumor_type==tumor.type) %>%
         select(-tumor_type) %>%
@@ -494,6 +494,12 @@ read_pathways <- function(tumor.type){
                                        "TGFBR"),
                pathway=str_replace_all(pathway, "BRCA",
                                        "DNA repair"))
+    if(tumor.type=="mucinous"){
+        ix <- which(pathways$gene_symbol == "JAK1" & pathways$pathway == "Cell cycle")
+        ix2 <- which(pathways$gene_symbol == "MED1-STAT5B" & pathways$pathway == "Other")
+        pathways2 <- pathways[-c(ix, ix2), ]
+    } else pathways2 <- pathways
+    pathways2
 }
 
 read_integrated_data <- function(manifest, pathways){
@@ -1271,6 +1277,7 @@ read_facets <- function(file){
 }
 
 join_facets_to_manifest1 <- function(facets, manifest.list){
+    rename <- dplyr::rename
     manifest6 <- man(manifest.list)
     facets.matched <- inner_join(facets, key(manifest.list),
                                  by=c("Sample"="pgdx_id")) %>%
@@ -1319,6 +1326,7 @@ join_facets_to_manifest1 <- function(facets, manifest.list){
 }
 
 join_facets_to_manifest2 <- function(manifest7, directory.listing){
+    rename <- dplyr::rename
     ##
     ## Add FACETS id for WGS samples to facilitate merging FACET processed data
     ##
@@ -1415,6 +1423,7 @@ check_ids <- function(clinical, manifest){
 }
 
 clean_clinical_data <- function(sdat, manifest2){
+    rename <- dplyr::rename
     clinical.data <- manifest2 %>%
         mutate(discordant_tumor_type=FALSE) %>%
         clinical_data() %>%
@@ -1485,4 +1494,397 @@ read_sdata <- function(sfile){
     sdat <- readRDS(sfile) %>%
         as_tibble()
     sdat
+}
+
+save_object <- function(object, nm){
+    filepath <- file.path("data", paste0(nm, ".rda"))
+    assign(nm, value=object)
+    save(object, file=filepath, list=nm)
+    filepath
+}
+
+load2 <- function(nm){
+    load(file.path("data", nm), envir=parent.frame(2))
+}
+
+subset_by_tumors <- function(manifest, tumor.levels){
+    manifest <- manifest %>%
+        cancer_names() %>%
+        filter(tumor %in% tumor.levels) %>%
+        filter(tumor.normal=="tumor")
+    manifest
+}
+
+pathway_levels <- function(){
+    pathway.levels <- c("PI3K", "Ras and TK receptors",
+                        "Chromatin Regulating",
+                        "Cell cycle",
+                        "Notch", "DNA repair",
+                        "Mismatch repair",
+                        "WNT", "TGFBR", "JAK/STAT",
+                        "Other", "Large gene")
+    pathway.levels
+}
+
+mucinous_pathways <- function(mucinous.levels.file){
+    muc.pathways <- c("Ras and TK receptors",
+                    "PI3K",
+                    "Chromatin Regulating",
+                    "Cell cycle",
+                    "Notch",
+                    "DNA repair",
+                    "Mismatch repair",
+                    "WNT",
+                    "TGFBR", "JAK/STAT",
+      "Other", "Large gene")
+    levels <- readRDS(mucinous.levels.file)
+    levels$pathway <- muc.pathways
+    levels
+}
+
+read_idat <- function(idat.file, manifest, pathways){
+    rename <- dplyr::rename
+    tumortypes <- select(manifest, lab_id, tumor_type) %>%
+        ungroup() %>%
+        distinct()    
+    idat <- idat.file %>%
+        readRDS() %>%
+        filter(lab_id %in% manifest$lab_id) %>%
+        left_join(pathways, by=c("gene"="gene_symbol")) %>%
+        left_join(tumortypes, by="lab_id") %>%
+        distinct() %>%
+        filter(!is.na(pathway)) %>%
+        mutate(alteration=ifelse(type=="mutation",
+                                 "mutation", alteration)) %>%
+        cancer_names() %>%
+        select(-tumor_type) %>%
+        rename(tumor_type=tumor)
+
+    idat
+}
+
+gene_list <- function(idat, pathway.levels2, tumor.levels){
+    gene.list <- idat %>%
+        ##filter(pathway != "Hypermutator") %>%
+        mutate(pathway=factor(pathway, pathway.levels2),
+               tumor_type=factor(tumor_type, tumor.levels)) %>%
+        group_by(gene, pathway, tumor_type) %>%
+        summarize(n=length(unique(lab_id)),
+                  .groups="drop") %>%
+        arrange(pathway, tumor_type, n) %>%
+        group_by(pathway) %>%
+        nest()
+    gene.list
+}
+
+remove_duplicated_genes <- function(gene.list){
+    gl <- filter(gene.list, pathway != "Hypermutator") %>%
+        pull(data) %>%
+        map(function(x){
+            filter(x, !duplicated(gene)) %>%
+                arrange(n)
+        })
+    gl
+}
+
+gene_levels <- function(gene.list){
+    gene.levels <- unnest(gene.list, "data") %>%
+        pull(gene) %>%
+        unique()
+}
+
+endo_order <- function(idat){
+    genes.for.sample.order <- idat %>%
+        filter(pathway=="PI3K",
+               tumor_type=="Ovarian endometrioid") %>%
+        group_by(gene) %>%
+        summarize(n=length(unique(lab_id)),
+                  .groups="drop") %>%
+        arrange(-n)
+    genes.for.sample.order
+}
+
+muc_order <- function(idat){
+    genes.for.sample.order <- idat %>%
+        filter(pathway=="Ras and TK receptors",
+               tumor_type=="Ovarian mucinous") %>%
+        group_by(gene) %>%
+        summarize(n=length(unique(lab_id)),
+                  .groups="drop") %>%
+        arrange(-n)
+}
+
+endo_id_levels <- function(idat, genes.for.sample.order){
+    ovarian.order <- filter(idat, tumor_type=="Ovarian endometrioid") %>%
+        mutate(gene_symbol=gene) %>%
+        order_samples(gene.levels=genes.for.sample.order$gene)
+    uterine.order <- filter(idat, tumor_type=="Uterine endometrial") %>%
+        mutate(gene_symbol=gene) %>%
+        order_samples(gene.levels=genes.for.sample.order$gene)
+    id.levels <- c(ovarian.order$lab_id, uterine.order$lab_id)
+}
+
+
+muc_id_levels <- function(idat, genes.for.sample.order){
+    ovarian.order <- filter(idat, tumor_type=="Ovarian mucinous") %>%
+        mutate(gene_symbol=gene) %>%
+        order_samples(gene.levels=genes.for.sample.order$gene)
+    crc.order <- filter(idat, tumor_type=="Colorectal mucinous") %>%
+        mutate(gene_symbol=gene) %>%
+        order_samples(gene.levels=genes.for.sample.order$gene)
+    id.levels <- c(ovarian.order$lab_id, crc.order$lab_id)
+}
+
+order_idat_endo <- function(idat, tumor.levels, pathway.levels, sample.order){
+    ## **Genes:**
+    ## - order by frequency within each pathway
+
+    ## **Samples:**
+    ##Order samples by
+    ##  *  (1) hypermutator status (no hypermutator first)
+    ##  *  (2) mutation status of most mutated gene in first pathway
+    ##  *  (3) mutation status of second most comply mutated gene in first pathway
+
+    ##  We can not determine the gene ordering solely by ovarian endometrioid samples as some genes are only altered in uterine endometrial.
+    ## For each pathway, sort by tumor type and then frequency
+    ##     - drop genes in uterine endometrial that are already in ovarian endometrioid
+    ## decide gene order from ovarian endometrioid
+    gene.list <- gene_list(idat, pathway.levels, tumor.levels)
+    ## For each pathway, drop uterine endometrial genes that are already included in ovarian endometrioid
+    gl <- remove_duplicated_genes(gene.list)
+    gene.list$data[gene.list$pathway != "Hypermutator"] <- gl
+    gene.levels <- gene_levels(gene.list)
+    ##order_samples <- ovarian.subtypes:::order_samples
+    ##genes.for.sample.order <- sample_order(idat)
+    id.levels <- endo_id_levels(idat, sample.order)
+    plevels <- pathway.levels
+    gene.levels2 <- gene.levels[gene.levels != 'hypermutator']
+    idat2 <- idat %>%
+        filter(gene != "hypermutator") %>%
+        mutate(lab_id=factor(lab_id, id.levels),
+               gene=factor(gene, gene.levels2),
+               pathway=factor(pathway, plevels),
+               tumor_type=factor(tumor_type, tumor.levels))
+    idat2
+}
+
+order_idat_mucinous <- function(idat, tumor.levels, pathway.levels, sample.order){
+    ## **Genes:**
+    ## - order by frequency within each pathway
+
+    ## **Samples:**
+    ##Order samples by
+    ##  *  (1) hypermutator status (no hypermutator first)
+    ##  *  (2) mutation status of most mutated gene in first pathway
+    ##  *  (3) mutation status of second most comply mutated gene in first pathway
+
+    ##  We can not determine the gene ordering solely by ovarian endometrioid samples as some genes are only altered in uterine endometrial.
+    ## For each pathway, sort by tumor type and then frequency
+    ##     - drop genes in uterine endometrial that are already in ovarian endometrioid
+    ## decide gene order from ovarian endometrioid
+    gene.list <- gene_list(idat, pathway.levels, tumor.levels)
+    ## For each pathway, drop uterine endometrial genes that are already included in ovarian endometrioid
+    gl <- remove_duplicated_genes(gene.list)
+    gene.list$data[gene.list$pathway != "Hypermutator"] <- gl
+    gene.levels <- gene_levels(gene.list)
+    ##order_samples <- ovarian.subtypes:::order_samples
+    ##genes.for.sample.order <- sample_order(idat)
+    id.levels <- muc_id_levels(idat, sample.order)
+    plevels <- pathway.levels
+    gene.levels2 <- gene.levels[gene.levels != 'hypermutator']
+    idat2 <- idat %>%
+        filter(gene != "hypermutator") %>%
+        mutate(lab_id=factor(lab_id, id.levels),
+               gene=factor(gene, gene.levels2),
+               pathway=factor(pathway, plevels),
+               tumor_type=factor(tumor_type, tumor.levels))
+    idat2
+}
+
+order_endo <- function(idat, manifest){
+    tumor.levels <- c("Ovarian endometrioid", "Uterine endometrial")
+    pathway.levels <- pathway_levels()
+    pathway.levels2 <- c("Hypermutator", pathway.levels)
+    sample.order <- endo_order(idat)
+    idat2 <- order_idat_endo(idat, tumor.levels, pathway.levels2, sample.order)
+    idat3 <- remove_duplicate_samples(idat2, manifest)
+    idat3$pathway <- droplevels(idat3$pathway)
+    idat3
+}
+
+exclude_genes_only_mutated_in_cgcrc254 <- function(idat){
+    genes.to.drop <- idat %>% group_by(gene) %>%
+        summarize(ids=paste(unique(lab_id), collapse=",")) %>%
+        filter(ids=="CGCRC254T")
+    idat2 <- filter(idat, !gene %in% genes.to.drop$gene)
+    idat2
+}
+
+order_mucinous <- function(idat, manifest, pathway.levels){
+    tumor.levels <- c("Ovarian mucinous", "Colorectal mucinous")
+    sample.order <- muc_order(idat)
+    ##trace(order_idat_mucinous, browser)
+    pathway.levels2 <- c("Hypermutator", pathway.levels)
+    idat2 <- order_idat_mucinous(idat, tumor.levels, pathway.levels2, sample.order)
+    idat3 <- remove_duplicate_samples(idat2, manifest)
+    ## Exclude rows that only appear in extreme hypermutator CGCRC254T
+    idat4 <- exclude_genes_only_mutated_in_cgcrc254(idat3)
+    idat4$pathway <- droplevels(idat4$pathway)
+    idat4$gene <- droplevels(idat4$gene)
+    idat4
+}
+
+order_gi <- function(idat, manifest){
+    tumor.levels <- c("Colorectal mucinous", "Stomach mucinous", "Pancreas mucinous")
+    idat2 <- order_idat(idat, tumor.levels)
+    ##idat3 <- remove_duplicate_samples(idat2, manifest)
+    idat2
+}
+
+
+remove_duplicate_samples <- function(idat2, manifest){
+    ##
+    ## For patients with multiple samples, only include a single sample
+    ##
+    dup.samples <- idat2 %>%
+        select(lab_id) %>%
+        distinct() %>%
+        left_join(select(manifest, subject_id, lab_id), by="lab_id") %>%
+        group_by(subject_id) %>%
+        nest()
+    nr <- map_dbl(dup.samples$data, nrow)
+    dup.samples2  <- dup.samples[nr > 1, ]
+    drop.samples <- dup.samples$data %>% map_dfr(function(x) x[-1, ])
+    if(any("CGOV141T_1" %in% drop.samples$lab_id))
+        drop.samples$lab_id[match("CGOV141T_1", drop.samples$lab_id)] <- "CGOV141T"
+    idat2 <- filter(idat2, !lab_id %in% drop.samples$lab_id)
+    id.levels <- levels(idat2$lab_id)
+    id.levels <- id.levels[!id.levels %in% drop.samples$lab_id]
+    idat2$lab_id <- factor(idat2$lab_id, id.levels)
+    idat2
+}
+
+subset_endo <- function(manifest){
+    tumor.levels <- c("Ovarian endometrioid", "Uterine endometrial")
+    manifest2 <- subset_by_tumors(manifest, tumor.levels)
+    manifest2
+}
+
+
+subset_gi <- function(manifest){
+    tumor.levels <- c("Colorectal mucinous", "Stomach mucinous", "Pancreas mucinous")
+    manifest <- manifest %>%
+        cancer_names() %>%
+        filter(tumor %in% tumor.levels) %>%
+        filter(tumor.normal=="tumor")
+    manifest
+}
+
+subset_mucinous <- function(manifest){
+    tumor.levels <- c("Ovarian mucinous", "Colorectal mucinous")
+    manifest <- manifest %>%
+        cancer_names() %>%
+        filter(tumor %in% tumor.levels) %>%
+        filter(tumor.normal=="tumor")
+    manifest
+}
+
+compare <- function(obj1, obj2){
+    all(obj1$lab_id %in% obj2$lab_id)
+    all(obj1$gene %in% obj2$gene)
+    identical(levels(obj1$lab_id),
+              levels(obj2$lab_id))
+    ## levels are identical after dropping unused hypermutator level
+    identical(levels(obj1$gene),
+              levels(obj2$gene))
+    ## 70 levels in idat.muc.ordered
+    ## only 52 levels in idat.mucinous
+    identical(levels(obj1$pathway),
+              levels(obj2$pathway))
+}
+
+read_methylation_se <- function(file, manifest, discordant){
+    rename <- dplyr::rename
+    se <- readRDS(file)
+    meth <- tibble(lab_id=colnames(se)) %>%
+        mutate(platform="methylation") %>%
+        filter(!lab_id %in% discordant$lab_id)
+    meth2 <- select(manifest, -platform) %>%
+        left_join(meth, by="lab_id") %>%
+        filter(!is.na(platform))
+    any(!meth$lab_id %in% meth2$lab_id)
+    meth.fuzzymatch <- filter(meth, !lab_id %in% meth2$lab_id) %>%
+        rename(alt_id=lab_id) %>%
+        mutate(lab_id=c("CGCRC330N_1",
+                        "CGCRC330T_1",
+                        "CGCRC330T1_1",
+                        "CGOV177T_2",
+                        "CGOV179T_Rpt",
+                        "CGOV186T_2",
+                        "CGOV188N_2",
+                        "CGOV188T_2",
+                        "CGST1N_1",
+                        "CGST1T_2",
+                        "CGST2T_2")) %>%
+        select(-alt_id)
+    meth3 <- select(manifest, -platform) %>%
+        left_join(meth.fuzzymatch, by="lab_id") %>%
+        filter(!is.na(platform))
+    meth4 <- bind_rows(meth2, meth3)
+    methylation <- meth4
+    methylation
+}
+
+read_methylation_data <- function(file, tcga.file){
+    rename <- dplyr::rename
+    se <- readRDS(tcga.file)
+    metadata <- readRDS(file) %>%
+        as_tibble() %>%
+        filter(grepl("^C", Sample_Name)) %>%
+        rename(lab_id=Sample_Name)
+    metadata2 <- colData(se) %>%
+        as_tibble()
+    md <- left_join(metadata2, metadata,
+                    join_by(lab_id)) %>%
+        select(-c(Diagnosis, sampletype, Sample)) %>%
+        set_colnames(tolower(colnames(.))) %>%
+        mutate(t.n=substr(tumor, 1, 1))
+    md2 <- as(md, "DataFrame")
+    colData(se) <- md2
+    colnames(se) <- se$lab_id
+    se
+}
+
+check_against_manifest <- function(se, manifest, discordant){
+    ## check that all jhu samples are in the manifest
+    is_jhu <- se$study == "JHU"
+    jhu <- se[, is_jhu]
+    in_manifest <- colnames(jhu) %in% manifest$lab_id
+    notin_manifest <- colnames(jhu)[!in_manifest]
+    ## We only care about resolving matches for the samples that were not discordant
+    notin_manifest2 <- notin_manifest[!notin_manifest %in% discordant$lab_id]
+    dat <- tibble(to_map=notin_manifest2,
+                  lab_id=NA)
+    for(i in 1:nrow(dat)){
+        id <- dat$to_map[i]
+        if(id=="CGCRC330T"){
+            dat$lab_id[i] <- "CGCRC330T_1"
+            next()
+        }
+        ix <- grep(id, manifest$lab_id)
+        if(length(ix)==1){
+            dat$lab_id[i] <- manifest$lab_id[ix]
+            next()
+        }
+        stop()
+    }
+    ix <- match(dat$to_map, colnames(jhu))
+    colnames(jhu)[ix] <- dat$lab_id
+    jhu$lab_id <- colnames(jhu)
+    jhu2 <- jhu[, !colnames(jhu) %in% discordant$lab_id]
+    stopifnot(all(colnames(jhu2) %in% manifest$lab_id))
+
+    tcga <- se[, se$study=="TCGA"]
+    methylation_se <- cbind(jhu2, tcga)
+    methylation_se
 }
