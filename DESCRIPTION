@@ -1,6 +1,6 @@
 Package: ovarian.subtypes
 Title: Functions and data supporting ovarian subtypes manuscript 
-Version: 0.0.23
+Version: 0.0.24
 Authors@R: 
     person("Rob", "Scharpf", , "rscharpf@jhu.edu", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0003-4702-2656"))
