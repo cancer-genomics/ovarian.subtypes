@@ -7,7 +7,9 @@
 library(targets)
 # library(tarchetypes) # Load other packages as needed.
 # Set target options:
-tar_option_set(packages = c("tidyverse", "here", "lubridate", "magrittr", "fs",
+tar_option_set(packages = c("tidyverse", "here",
+                            "lubridate", "magrittr",
+                            "fs",
                             "SummarizedExperiment"), # Packages that your targets need for their tasks.
                format="rds")
 ## Run the R scripts in the R/ folder with your custom functions:

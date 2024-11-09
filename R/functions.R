@@ -1888,3 +1888,8 @@ check_against_manifest <- function(se, manifest, discordant){
     methylation_se <- cbind(jhu2, tcga)
     methylation_se
 }
+
+get_manifest <- function(){
+    data(manifest,package="ovarian.subtypes", envir=environment())
+    manifest
+}

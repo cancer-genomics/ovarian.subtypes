@@ -57,7 +57,7 @@ format_cancer_stage|function|d353c786d323c5f9|||||||||||||||
 format_number|function|9a02617f6ade70f4|||||||||||||||
 gene_levels|function|819d445c9583c88e|||||||||||||||
 gene_list|function|4a36be13087f5e06|||||||||||||||
-get_manifest|function|1955949053802b67|||||||||||||||
+get_manifest|function|b87e99b7ff286adb|||||||||||||||
 ggRearrange2|function|61e62e4041e4659d|||||||||||||||
 gi.manifest|stem|83faa50a563fa158|83f1e2c6bff141c8|bf58b3c8be15ac6d|1933471846||t19953.6840720983s|c57031b4c03f3543|1985|rds|local|vector|||0.003||
 gi.pathways|stem|78ce2ff978879779|44cddfc08b3367c1|8aa2d14334e0b798|978893974||t19953.6840710525s|0b92cb378e24f5ce|751|rds|local|vector|||0.005||
