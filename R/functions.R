@@ -1893,3 +1893,86 @@ get_manifest <- function(){
     data(manifest,package="ovarian.subtypes", envir=environment())
     manifest
 }
+
+#' @export
+draw_heatmap <- function(heatmap.components){
+    cluster_data <- heatmap.components$cluster_data
+    ha_rows <- heatmap.components$ha_rows
+    hegt <- Heatmap(cluster_data,
+                    col = colorRamp2(c(0,0.25,0.5),
+                                     c("#00FFCC","#FFFFFF","#0099FF")),
+                    show_column_names = FALSE,
+                    left_annotation = ha_rows,
+                    show_column_dend = FALSE,
+                    show_heatmap_legend=FALSE,
+                    row_title_rot=0,
+                    clustering_distance_rows = "euclidean")
+    return(hegt)
+}
+
+#' @export
+heatmap_setup <- function(methylation_se){
+    metadata <- as_tibble(colData(methylation_se))
+    df <- metadata %>%
+        mutate(t.n=ifelse(t.n=="T", "Tumor", "Normal")) %>%
+        rename(`Tissue type`=t.n) %>%
+        mutate(endo.muc=ifelse(grepl("end", diagnosis),
+                               "Endometrial/Endometrioid",
+                               "Mucinous"))
+    colnames(df) <- Hmisc::capitalize(colnames(df))
+    bvals <- beta(methylation_se)
+    df$Diagnosis <- factor(df$Diagnosis,
+                           levels = c("Uterine endometrial",
+                                      "Ovarian endometrioid",
+                                      "Ovarian mucinous",
+                                      "Colorectal mucinous",
+                                      "Pancreas mucinous",
+                                      "Stomach mucinous"))
+    dx.colors <- tumor_colors()
+    study.colors <- c("JHU"="#002d72",
+                      "TCGA"="gray90")
+    tn.colors <- c("Normal" = "gray",
+                   "Tumor" = "black")
+    tn.lgd <- Legend(labels=names(tn.colors),
+                      legend_gp=gpar(fill=tn.colors),
+                      labels_gp=gpar(fontsize=18),
+                      title_gp=gpar(fontsize=22),
+                     title=" Tissue")
+    dx.lgd <- Legend(labels=names(dx.colors),
+                     legend_gp=gpar(fill=dx.colors),
+                     labels_gp=gpar(fontsize=18),
+                     title_gp=gpar(fontsize=22),
+                     title=" Tumor type")
+    histology.colors <- c("orange3", "steel blue")
+    names(histology.colors) <- c("Endometrial/Endometrioid", "Mucinous")
+    histology.lgd <- Legend(labels=names(histology.colors),
+                            legend_gp=gpar(fill=histology.colors),
+                            labels_gp=gpar(fontsize=18),
+                            title_gp=gpar(fontsize=22),
+                            title=" Histology")
+    col_fun <- colorRamp2(c(0,0.25,0.5),
+                          c("#00FFCC","#FFFFFF","#0099FF"))
+    beta.lgd <- Legend(col_fun = col_fun, title = expression(beta),
+                       labels_gp=gpar(fontsize=18),
+                       title_gp=gpar(fontsize=22))
+    horiz.legends <- packLegend(dx.lgd, histology.lgd,
+                                direction="horizontal")
+    vert.legends <- packLegend(tn.lgd, beta.lgd, direction="vertical")
+    df <- df[, c("Diagnosis", "Tissue type", "Study", "Endo.muc")]
+    colnames(df) <- c(" Tumor type", " Tissue", " Study", " Histology")
+    ha_rows  <-  rowAnnotation(df = df[, c(" Tumor type", " Tissue", " Histology")],
+                               col = list(` Tumor type`=dx.colors,
+                                          ` Tissue`=tn.colors,
+                                          ` Histology`=histology.colors),
+                               show_legend=FALSE,
+                               annotation_name_rot=45,
+                               annotation_name_side="top")
+    ix <- seq_len(nrow(methylation_se))
+    cluster_data <- t(bvals[ix, ])
+    rownames(cluster_data) <- NULL
+    result <- list(cluster_data=cluster_data,
+                   ha_rows=ha_rows,
+                   vert.legends=vert.legends,
+                   horiz.legends=horiz.legends)
+    result
+}
