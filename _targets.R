@@ -18,8 +18,8 @@ lapply(list.files("R", full.names=TRUE), source)
 # tar_source("other_functions.R") # Source other scripts as needed.
 # Replace the target list below with your own:
 list(
-    tar_target(file, here("inst", "extdata", "manifest.rds")),
-    tar_target(sfile, here("inst", "extdata", "sdat.rds")),
+    tar_target(file, here("inst", "extdata", "manifest.rds"), format="file"),
+    tar_target(sfile, here("inst", "extdata", "sdat.rds"), format="file"),
     tar_target(manifest0, readRDS(file)),
     tar_target(sdat, read_sdata(sfile)),
     tar_target(facets.file, file.path("..", "output", "facets",
