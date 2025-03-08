@@ -38,7 +38,7 @@ if (FALSE) {
     } else if (tissue_source[i] == "TCGA-STAD") {
       tissue_source[i] <- "Stomach mucinous"
     } else if (tissue_source[i] == "TCGA-UCEC") {
-      tissue_source[i] <- "Uterine endometrial"
+      tissue_source[i] <- "Uterine endometrioid"
     } else {
       stop("Error! Wrong tissue source.")
       print(tissue_source[i])
@@ -56,9 +56,13 @@ if (FALSE) {
   # COAD = Colorectal mucinous
   # PAAD = Pancreas mucinous
   # STAD = Stomach mucinous
-  # UCEC = Uterine endometrial
+  # UCEC = Uterine endometrioid
   allcols <- colnames(methylation_se)
-  colData(methylation_se)$diagnosis[match(c(1:164), allcols)] <- tissue_source
+  levels(colData(methylation_se)$diagnosis) <- c("Uterine endometrioid",
+                                                 levels(colData(methylation_se)$diagnosis))
+  newlevels <- levels(colData(methylation_se)$diagnosis)[-match("Uterine endometrial", levels(colData(methylation_se)$diagnosis))]
+  colData(methylation_se)$diagnosis[match(c(1:164), allcols)] <- factor(tissue_source,
+                                                                        levels = newlevels)
   colData(methylation_se)$tumor[match(c(1:164), allcols)] <- tissue_type
   colData(methylation_se)$t.n[match(c(1:164), allcols)] <- tissue_type_short
   colData(methylation_se)$lab_id[match(c(1:164), allcols)] <- barcodes
