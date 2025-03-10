@@ -58,8 +58,8 @@ if (FALSE) {
   # STAD = Stomach mucinous
   # UCEC = Uterine endometrioid
   allcols <- colnames(methylation_se)
-  levels(colData(methylation_se)$diagnosis) <- c("Uterine endometrioid",
-                                                 levels(colData(methylation_se)$diagnosis))
+  levels(colData(methylation_se)$diagnosis) <- c(levels(colData(methylation_se)$diagnosis),
+                                                 "Uterine endometrioid")
   newlevels <- levels(colData(methylation_se)$diagnosis)[-match("Uterine endometrial", levels(colData(methylation_se)$diagnosis))]
   colData(methylation_se)$diagnosis[match(c(1:164), allcols)] <- tissue_source
   colData(methylation_se)$diagnosis[colData(methylation_se)$diagnosis == "Uterine endometrial"] <- "Uterine endometrioid"
