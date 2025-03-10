@@ -910,7 +910,7 @@ muc <- function() c("Colorectal mucinous", "Ovarian mucinous", "Pancreaas mucino
 #' Provide endometrioid/endometrial cancers
 #'
 #' @export
-endo <- function() c("Ovarian endometrioid", "Uterine endometrial")
+endo <- function() c("Ovarian endometrioid", "Uterine endometrioid")
 
 tumor_normal_matrix <- function(x){
     x.nested <- x %>%
@@ -1917,12 +1917,12 @@ heatmap_setup <- function(methylation_se){
         mutate(t.n=ifelse(t.n=="T", "Tumor", "Normal")) %>%
         rename(`Tissue type`=t.n) %>%
         mutate(endo.muc=ifelse(grepl("end", diagnosis),
-                               "Endometrial/Endometrioid",
+                               "Endometrioid",
                                "Mucinous"))
     colnames(df) <- Hmisc::capitalize(colnames(df))
     bvals <- beta(methylation_se)
     df$Diagnosis <- factor(df$Diagnosis,
-                           levels = c("Uterine endometrial",
+                           levels = c("Uterine endometrioid",
                                       "Ovarian endometrioid",
                                       "Ovarian mucinous",
                                       "Colorectal mucinous",
@@ -1944,7 +1944,7 @@ heatmap_setup <- function(methylation_se){
                      title_gp=gpar(fontsize=22),
                      title=" Tumor type")
     histology.colors <- c("orange3", "steel blue")
-    names(histology.colors) <- c("Endometrial/Endometrioid", "Mucinous")
+    names(histology.colors) <- c("Endometrioid", "Mucinous")
     histology.lgd <- Legend(labels=names(histology.colors),
                             legend_gp=gpar(fill=histology.colors),
                             labels_gp=gpar(fontsize=18),
