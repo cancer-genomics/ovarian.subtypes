@@ -1918,18 +1918,23 @@ heatmap_setup <- function(methylation_se){
         mutate(t.n=ifelse(t.n=="T", "Tumor", "Normal")) %>%
         rename(`Tissue type`=t.n) %>%
         mutate(endo.muc=ifelse(grepl("end", diagnosis),
-                               "Endometrioid",
+                               "Endometrial",
                                "Mucinous"))
     colnames(df) <- Hmisc::capitalize(colnames(df))
     bvals <- beta(methylation_se)
     df$Diagnosis <- factor(df$Diagnosis,
-                           levels = c("Uterine endometrioid",
+                           levels = c("Uterine endometrial",
                                       "Ovarian endometrioid",
                                       "Ovarian mucinous",
                                       "Colorectal mucinous",
-                                      "Pancreas mucinous",
+                                      "Pancreatic mucinous",
                                       "Stomach mucinous"))
+    df$Tissue <- str_extract(df$Diagnosis, ".*(?= )")
     dx.colors <- tumor_colors()
+    # use Ovarian mucinous colors as Ovarian tissue for both endo and muc
+    # histology will differentiate between endo and muc 
+    dx.colors <- dx.colors[-match(c("Uterine endometrioid", "Ovarian endometrioid"), names(dx.colors))]
+    names(dx.colors) <- str_extract(names(dx.colors), ".*(?= )")
     study.colors <- c("JHU"="#002d72",
                       "TCGA"="gray90")
     tn.colors <- c("Normal" = "gray",
@@ -1938,14 +1943,14 @@ heatmap_setup <- function(methylation_se){
                       legend_gp=gpar(fill=tn.colors),
                       labels_gp=gpar(fontsize=18),
                       title_gp=gpar(fontsize=22),
-                     title=" Tissue")
+                     title=" Tumor/Normal")
     dx.lgd <- Legend(labels=names(dx.colors),
                      legend_gp=gpar(fill=dx.colors),
                      labels_gp=gpar(fontsize=18),
                      title_gp=gpar(fontsize=22),
-                     title=" Tumor type")
+                     title=" Tissue type")
     histology.colors <- c("orange3", "steel blue")
-    names(histology.colors) <- c("Endometrioid", "Mucinous")
+    names(histology.colors) <- c("Endometrial", "Mucinous")
     histology.lgd <- Legend(labels=names(histology.colors),
                             legend_gp=gpar(fill=histology.colors),
                             labels_gp=gpar(fontsize=18),
@@ -1959,11 +1964,11 @@ heatmap_setup <- function(methylation_se){
     horiz.legends <- packLegend(dx.lgd, histology.lgd,
                                 direction="horizontal")
     vert.legends <- packLegend(tn.lgd, beta.lgd, direction="vertical")
-    df <- df[, c("Diagnosis", "Tissue type", "Study", "Endo.muc")]
-    colnames(df) <- c(" Tumor type", " Tissue", " Study", " Histology")
-    ha_rows  <-  rowAnnotation(df = df[, c(" Tumor type", " Tissue", " Histology")],
-                               col = list(` Tumor type`=dx.colors,
-                                          ` Tissue`=tn.colors,
+    df <- df[, c("Tissue", "Tissue type", "Study", "Endo.muc")]
+    colnames(df) <- c(" Tissue type", " Tumor/Normal", " Study", " Histology")
+    ha_rows  <-  rowAnnotation(df = df[, c(" Tissue type", " Tumor/Normal", " Histology")],
+                               col = list(` Tissue type`=dx.colors,
+                                          ` Tumor/Normal`=tn.colors,
                                           ` Histology`=histology.colors),
                                show_legend=FALSE,
                                annotation_name_rot=45,
