@@ -965,10 +965,11 @@ beta <- function(se) assays(se)[["beta"]]
 #' @export
 tumor_colors <- function(){
     dx.colors <- c("Uterine endometrioid" = "#DDCC7F",
+                   "Uterine endometrial" = "#DDCC7F",
                    "Ovarian endometrioid" = "#0F7554",
                    "Ovarian mucinous" = "#44AA99",
                    "Colorectal mucinous" = "#882255",
-                   "Pancreas mucinous" = "#AA4499",
+                   "Pancreatic mucinous" = "#AA4499",
                    "Stomach mucinous" = "#D695D0")
 }
 
