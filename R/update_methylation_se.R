@@ -34,7 +34,7 @@ if (FALSE) {
     } else if (tissue_source[i] == "TCGA-COAD") {
       tissue_source[i] <- "Colorectal mucinous"
     } else if (tissue_source[i] == "TCGA-PAAD") {
-      tissue_source[i] <- "Pancreas mucinous"
+      tissue_source[i] <- "Pancreatic mucinous"
     } else if (tissue_source[i] == "TCGA-STAD") {
       tissue_source[i] <- "Stomach mucinous"
     } else if (tissue_source[i] == "TCGA-UCEC") {
@@ -58,7 +58,15 @@ if (FALSE) {
   # STAD = Stomach mucinous
   # UCEC = Uterine endometrioid
   allcols <- colnames(methylation_se)
+  dx_levels <- levels(colData(methylation_se)$diagnosis)
+  new_dx_levels <- dx_levels
+  new_dx_levels[match("Pancreas mucinous", new_dx_levels)] <- "Pancreatic mucinous"
+  colData(methylation_se)$diagnosis <- as.character(colData(methylation_se)$diagnosis)
+  is_panc_muc <- colData(methylation_se)$diagnosis == "Pancreas mucinous"
+  colData(methylation_se)$diagnosis[is_panc_muc] <- "Pancreatic mucinous"
   colData(methylation_se)$diagnosis[match(c(1:164), allcols)] <- tissue_source
+  colData(methylation_se)$diagnosis <- factor(colData(methylation_se)$diagnosis,
+                                              levels = new_dx_levels)
   colData(methylation_se)$tumor[match(c(1:164), allcols)] <- tissue_type
   colData(methylation_se)$t.n[match(c(1:164), allcols)] <- tissue_type_short
   colData(methylation_se)$lab_id[match(c(1:164), allcols)] <- barcodes
