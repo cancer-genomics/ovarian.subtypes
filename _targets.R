@@ -81,7 +81,7 @@ list(
     tar_target(metadata.file, file.path("..", "extdata", "combmetadata.rds")),
     tar_target(meth.se, read_methylation_data(metadata.file, tcga.file)),
     tar_target(methylation_se_pre, check_against_manifest(meth.se, manifest, discordant)),
-    tar_target(match_table, read.csv("data", "match_table.csv")),
+    tar_target(match_table, read.csv(file.path("data", "match_table.csv"))),
     tar_target(methylation_se, update_tcga_barcodes(methylation_se_pre, match_table)),
     tar_target(save.meth.se, save_object(methylation_se, "methylation_se"))
 )
