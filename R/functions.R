@@ -2013,3 +2013,61 @@ purity_filter <- function(manifest, threshold = 0.2) {
         mutate(purity = as.numeric(purity)) %>%
         filter(!(is.na(purity) | purity <= 0.2))
 }
+
+update_tcga_barcodes <- function(methylation_se, match_table) {
+    # match_table was downloaded from the cluster
+    barcodes <- match_table$Barcode.ID
+    sum(is.na(barcodes)) # Only one is missing - check!
+    # [1] 1
+    # TCGA failed to update this sample
+    # See https://docs.gdc.cancer.gov/Data/Release_Notes/Data_Release_Notes/ for
+    # more information
+    barcodes[is.na(barcodes)] <- "TCGA-D5-6930-01A-11D-1926-05"
+    names(barcodes) <- c(1:164)
+    tissue_source <- match_table$Project.ID
+    for (i in seq_along(tissue_source)) {
+        if (is.na(tissue_source[i])) {
+            # This is the NA observation
+            tissue_source[i] <- "Colorectal mucinous"
+        } else if (tissue_source[i] == "TCGA-COAD") {
+            tissue_source[i] <- "Colorectal mucinous"
+        } else if (tissue_source[i] == "TCGA-PAAD") {
+            tissue_source[i] <- "Pancreatic mucinous"
+        } else if (tissue_source[i] == "TCGA-STAD") {
+            tissue_source[i] <- "Stomach mucinous"
+        } else if (tissue_source[i] == "TCGA-UCEC") {
+            tissue_source[i] <- "Uterine endometrial"
+        } else {
+            stop("Error! Wrong tissue source.")
+            print(tissue_source[i])
+        }
+    }
+    tissue_type <- match_table$Sample.Type
+    tissue_type <- gsub("Primary ", "", tissue_type)
+    tissue_type <- gsub("Solid Tissue ", "", tissue_type)
+    tissue_type[is.na(tissue_type)] <- "Tumor"
+    tissue_type_short <- sapply(tissue_type, function(x) substr(x, 1, 1))
+
+    # Update the colData and colnames for the TCGA samples
+    # Columns to update
+    # lab_id, diagnosis, tumor, t.n
+    # COAD = Colorectal mucinous
+    # PAAD = Pancreas mucinous
+    # STAD = Stomach mucinous
+    # UCEC = Uterine endometrial
+    allcols <- colnames(methylation_se)
+    dx_levels <- levels(colData(methylation_se)$diagnosis)
+    new_dx_levels <- dx_levels
+    new_dx_levels[match("Pancreas mucinous", new_dx_levels)] <- "Pancreatic mucinous"
+    colData(methylation_se)$diagnosis <- as.character(colData(methylation_se)$diagnosis)
+    is_panc_muc <- colData(methylation_se)$diagnosis == "Pancreas mucinous"
+    colData(methylation_se)$diagnosis[is_panc_muc] <- "Pancreatic mucinous"
+    colData(methylation_se)$diagnosis[match(c(1:164), allcols)] <- tissue_source
+    colData(methylation_se)$diagnosis <- factor(colData(methylation_se)$diagnosis,
+                                                levels = new_dx_levels)
+    colData(methylation_se)$tumor[match(c(1:164), allcols)] <- tissue_type
+    colData(methylation_se)$t.n[match(c(1:164), allcols)] <- tissue_type_short
+    colData(methylation_se)$lab_id[match(c(1:164), allcols)] <- barcodes
+    colnames(methylation_se)[match(c(1:164), allcols)] <- barcodes
+    return(methylation_se)
+}
