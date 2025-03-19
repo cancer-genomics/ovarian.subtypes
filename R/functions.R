@@ -2009,8 +2009,7 @@ add_facets_purity <- function(manifest, facets_purity) {
 
 purity_filter <- function(manifest, threshold = 0.2) {
     manifest %>%
-        mutate(purity = as.numeric(purity)) %>%
-        filter(!(is.na(purity) | purity <= 0.2))
+        filter(!(is.na(purity) | purity <= threshold))
 }
 
 update_tcga_barcodes <- function(methylation_se, match_table) {
