@@ -1993,8 +1993,7 @@ read_facets2 <- function(...) {
 
 add_facets_purity <- function(manifest, facets_purity) {
     facets_purity <- mutate(facets_purity,
-                            purity = as.character(purity),
-                            purity = ifelse(is.na(purity), "FACETS_NA", purity))
+                            is_na_purity = is.na(purity))
     manifest2 <- manifest[!is.na(manifest$facet_id), ]
     manifest3 <- left_join(manifest2, select(facets_purity, facet_id, purity), by = "facet_id") %>%
         left_join(select(facets_purity, genotype_id, purity), by = join_by("facet_id" == "genotype_id")) %>%
@@ -2002,7 +2001,7 @@ add_facets_purity <- function(manifest, facets_purity) {
                                   is.na(purity.x) & !is.na(purity.y) ~ purity.y,
                                   !is.na(purity.x) & is.na(purity.y) ~ purity.x,
                                   .default = NA)) %>%
-        replace_na(list(purity = "FACETS_Unprocessed")) %>%
+        replace_na(list(is_na_purity = FALSE)) %>%
         select(-c(purity.x, purity.y))
     manifest4 <- left_join(manifest, select(manifest3, lab_id, purity))
     return(manifest4)
