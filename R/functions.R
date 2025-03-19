@@ -1982,3 +1982,34 @@ heatmap_setup <- function(methylation_se){
                    horiz.legends=horiz.legends)
     result
 }
+
+read_facets2 <- function(...) {
+    dots <- list(...)
+    facets_purity <- lapply(dots, read.delim) %>%
+        bind_rows() %>%
+        select(facet_id = Sample, purity = Purity, genotype_id = Genotype.ID)
+    return(facets_purity)
+}
+
+add_facets_purity <- function(manifest, facets_purity) {
+    facets_purity <- mutate(facets_purity,
+                            purity = as.character(purity),
+                            purity = ifelse(is.na(purity), "FACETS_NA", purity))
+    manifest2 <- manifest[!is.na(manifest$facet_id), ]
+    manifest3 <- left_join(manifest2, select(facets_purity, facet_id, purity), by = "facet_id") %>%
+        left_join(select(facets_purity, genotype_id, purity), by = join_by("facet_id" == "genotype_id")) %>%
+        mutate(purity = case_when(is.na(purity.x) & is.na(purity.y) ~ NA,
+                                  is.na(purity.x) & !is.na(purity.y) ~ purity.y,
+                                  !is.na(purity.x) & is.na(purity.y) ~ purity.x,
+                                  .default = NA)) %>%
+        replace_na(list(purity = "FACETS_Unprocessed")) %>%
+        select(-c(purity.x, purity.y))
+    manifest4 <- left_join(manifest, select(manifest3, lab_id, purity))
+    return(manifest4)
+}
+
+purity_filter <- function(manifest, threshold = 0.2) {
+    manifest %>%
+        mutate(purity = as.numeric(purity)) %>%
+        filter(!(is.na(purity) | purity <= 0.2))
+}
