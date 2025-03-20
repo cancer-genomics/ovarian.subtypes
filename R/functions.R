@@ -1987,24 +1987,27 @@ read_facets2 <- function(...) {
     dots <- list(...)
     facets_purity <- lapply(dots, read.delim) %>%
         bind_rows() %>%
-        select(facet_id = Sample, purity = Purity, genotype_id = Genotype.ID)
+        select(facet_id = Sample, purity = Purity, genotype_id = Genotype.ID) %>%
+        mutate(is_na_purity = is.na(purity))
     return(facets_purity)
 }
 
-add_facets_purity <- function(manifest, facets_purity) {
-    facets_purity <- mutate(facets_purity,
-                            is_na_purity = is.na(purity))
-    manifest2 <- manifest[!is.na(manifest$facet_id), ]
-    manifest3 <- left_join(manifest2, select(facets_purity, facet_id, purity), by = "facet_id") %>%
-        left_join(select(facets_purity, genotype_id, purity), by = join_by("facet_id" == "genotype_id")) %>%
-        mutate(purity = case_when(is.na(purity.x) & is.na(purity.y) ~ NA,
+add_facets_purity <- function(manifest9, facets_purity) {
+    manifest10 <- manifest9[!is.na(manifest9$facet_id), ]
+    manifest11 <- left_join(manifest10, select(facets_purity, -genotype_id), by = "facet_id") %>%
+        left_join(select(facets_purity, -facet_id), by = join_by("facet_id" == "genotype_id")) %>%
+        mutate(purity = case_when(is.na(purity.x) & is.na(purity.y) ~ NA_real_,
                                   is.na(purity.x) & !is.na(purity.y) ~ purity.y,
                                   !is.na(purity.x) & is.na(purity.y) ~ purity.x,
-                                  .default = NA)) %>%
+                                  .default = NA_real_),
+               is_na_purity = case_when(is.na(is_na_purity.x) & is.na(is_na_purity.y) ~ NA,
+                                        is.na(is_na_purity.x) & !is.na(is_na_purity.y) ~ is_na_purity.y,
+                                        !is.na(is_na_purity.x) & is.na(is_na_purity.y) ~ is_na_purity.x,
+                                        .default = NA)) %>%
         replace_na(list(is_na_purity = FALSE)) %>%
-        select(-c(purity.x, purity.y))
-    manifest4 <- left_join(manifest, select(manifest3, lab_id, purity))
-    return(manifest4)
+        select(-c(purity.x, purity.y, is_na_purity.x, is_na_purity.y))
+    manifest <- left_join(manifest9, select(manifest11, lab_id, purity, is_na_purity))
+    return(manifest)
 }
 
 purity_filter <- function(manifest, threshold = 0.2) {
