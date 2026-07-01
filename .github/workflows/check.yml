@@ -1,0 +1,80 @@
+name: R CMD check
+
+# Package-level check: installs dependencies from CRAN/Bioconductor and runs
+# R CMD check + devtools::test().
+#
+# Full package pinning (exact versions) is enforced by the outer pipeline CI
+# in cancer-genomics/Hallberg2025, which uses renv::restore() from renv.lock.
+# This workflow provides a lighter-weight standalone check of the package itself.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+
+    env:
+      R_LIBS_USER: ~/R/library
+      BIOC_VERSION: "3.22"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.5.3"
+          use-public-rspm: true
+
+      - name: Cache R library
+        uses: actions/cache@v4
+        with:
+          path: ~/R/library
+          key: R-4.5.3-bioc-3.22-${{ hashFiles('DESCRIPTION') }}
+          restore-keys: R-4.5.3-bioc-3.22-
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libcurl4-openssl-dev libssl-dev libxml2-dev \
+            libharfbuzz-dev libfribidi-dev \
+            libgit2-dev libfontconfig1-dev libfreetype6-dev \
+            libpng-dev libtiff5-dev libjpeg-dev \
+            libglpk-dev
+
+      - name: Install R dependencies
+        run: |
+          install.packages("BiocManager")
+          BiocManager::install(version = Sys.getenv("BIOC_VERSION"),
+                               ask = FALSE, update = FALSE)
+          BiocManager::install(
+            c("GenomicRanges", "SummarizedExperiment", "Biobase",
+              "IRanges", "S4Vectors", "GenomeInfoDb", "BiocGenerics",
+              "MatrixGenerics", "DelayedArray"),
+            ask = FALSE, update = FALSE
+          )
+          install.packages(c(
+            "dplyr", "tidyr", "purrr", "tibble", "magrittr",
+            "stringr", "rlang", "readr", "ggplot2", "Hmisc", "broom", "broman",
+            "cowplot", "plyr", "scales",
+            "rcmdcheck", "devtools", "here"
+          ))
+        shell: Rscript {0}
+
+      - name: Run tests
+        run: devtools::test()
+        shell: Rscript {0}
+
+      - name: R CMD check
+        env:
+          _R_CHECK_FORCE_SUGGESTS_: false
+        run: |
+          rcmdcheck::rcmdcheck(
+            args     = c("--no-vignettes", "--no-manual"),
+            error_on = "error"
+          )
+        shell: Rscript {0}
