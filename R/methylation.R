@@ -1,3 +1,54 @@
+## Step 2 of the methylation provenance plan: regenerate se_lab_tcga.rds from
+## its grandparent inputs (bValsselect.rds, combmetadata.rds, se.rds).
+## Ported from archive methylation_summarized_experiment.Rmd.
+build_se_lab_tcga <- function(bValsselect_file, combmetadata_file, se_jhu_file,
+                               manifest) {
+  dlevels <- c("Uterine endometrial", "Ovarian endometrioid",
+               "Ovarian mucinous", "Colorectal mucinous",
+               "Pancreas mucinous", "Stomach mucinous")
+  manifest2 <- manifest %>%
+    cancer_names() %>%
+    dplyr::select(-tumor_type) %>%
+    dplyr::rename(tumor_type = tumor, tumor = tumor.normal) %>%
+    dplyr::mutate(study = "JHU", diagnosis = factor(tumor_type, dlevels))
+
+  lab.and.tcga <- readRDS(bValsselect_file) %>% t()
+  metadata <- readRDS(combmetadata_file) %>% tibble::as_tibble()
+
+  df <- tibble::tibble(
+    lab_id    = metadata$Sample_Name,
+    diagnosis = metadata$Diagnosis,
+    tissue    = metadata$Tissue,
+    type      = metadata$T.N,
+    study     = metadata$batch
+  ) %>%
+    dplyr::mutate(
+      study = ifelse(study %in% 1:2, "JHU", "TCGA"),
+      tumor = ifelse(type == "T", "Tumor", "Normal"),
+      diagnosis = factor(diagnosis, dlevels)
+    ) %>%
+    dplyr::select(lab_id, diagnosis, tumor, study)
+
+  se.lab.tcga <- SummarizedExperiment::SummarizedExperiment(
+    assays  = S4Vectors::SimpleList(beta = t(lab.and.tcga)),
+    colData = df
+  )
+
+  se.jhu <- readRDS(se_jhu_file)
+  rowindex <- rownames(se.jhu) %in% rownames(se.lab.tcga)
+  colindex <- which(!colnames(se.jhu) %in% colnames(se.lab.tcga))
+  se.jhu2 <- se.jhu[rowindex, colindex]
+  SummarizedExperiment::assays(se.jhu2) <- S4Vectors::SimpleList(
+    beta = SummarizedExperiment::assay(se.jhu2) / 1000
+  )
+  se.jhu3 <- se.jhu2[rownames(se.lab.tcga), ]
+  df.addl.jhu <- dplyr::filter(manifest2, lab_id %in% colnames(se.jhu3)) %>%
+    dplyr::select(lab_id, diagnosis, tumor, study)
+  SummarizedExperiment::colData(se.jhu3) <- S4Vectors::DataFrame(df.addl.jhu)
+
+  cbind(se.lab.tcga, se.jhu3)
+}
+
 read_methylation_se <- function(file, manifest, discordant) {
   rename <- dplyr::rename
   se <- readRDS(file)
