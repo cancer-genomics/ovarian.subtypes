@@ -54,6 +54,7 @@ read_methylation_data <- function(file, tcga.file) {
   se
 }
 
+#' @importFrom BiocGenerics cbind
 check_against_manifest <- function(se, manifest, discordant) {
   is_jhu <- se$study == "JHU"
   jhu <- se[, is_jhu]
