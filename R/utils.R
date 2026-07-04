@@ -172,13 +172,18 @@ suppl5_varnames <- function(s5) {
 #' @return Named list of GRanges, same length and names as \code{segments}.
 #' @export
 segs_to_granges <- function(segments, deletions) {
-    ## Extract seqinfo from the first deletion — handle both StructuralVariant
-    ## S4 objects (access via trellis::variant()) and plain GRanges.
-    del1 <- deletions[[1]]
-    si <- if (is(del1, "StructuralVariant")) {
-        GenomeInfoDb::seqinfo(trellis::variant(del1))
+    ## Extract seqinfo from the first non-NULL deletion, or fall back to the
+    ## first segment when all deletions are NULL (e.g. purity=NA samples).
+    non_null_dels <- Filter(Negate(is.null), deletions)
+    si <- if (length(non_null_dels) == 0L) {
+        seg1 <- segments[[1]]
+        if (is(seg1, "GRanges")) GenomeInfoDb::seqinfo(seg1)
+        else GenomeInfoDb::seqinfo(GenomicRanges::GRanges(seg1$seqnames,
+                                    IRanges::IRanges(seg1$start, seg1$end)))
+    } else if (is(non_null_dels[[1]], "StructuralVariant")) {
+        GenomeInfoDb::seqinfo(trellis::variant(non_null_dels[[1]]))
     } else {
-        GenomeInfoDb::seqinfo(del1)
+        GenomeInfoDb::seqinfo(non_null_dels[[1]])
     }
     purrr::map(segments, function(x) {
         ## If already a GRanges, just ensure seqinfo is attached.
