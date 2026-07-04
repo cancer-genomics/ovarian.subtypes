@@ -197,6 +197,7 @@ segs_to_granges <- function(segments, deletions) {
     })
 }
 
+#' @export
 load_tx <- function(build = "hg18") {
     tx <- trellis:::loadTx(build)
     GenomeInfoDb::keepSeqlevels(tx, paste0("chr", c(1:22, "X")),
