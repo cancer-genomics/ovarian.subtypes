@@ -10,7 +10,8 @@ build_se_lab_tcga <- function(bValsselect_file, combmetadata_file, se_jhu_file,
     cancer_names() %>%
     dplyr::select(-tumor_type) %>%
     dplyr::rename(tumor_type = tumor, tumor = tumor.normal) %>%
-    dplyr::mutate(study = "JHU", diagnosis = factor(tumor_type, dlevels))
+    dplyr::mutate(study = "JHU", diagnosis = factor(tumor_type, dlevels),
+                  tumor = Hmisc::capitalize(tumor))
 
   lab.and.tcga <- readRDS(bValsselect_file) %>% t()
   metadata <- readRDS(combmetadata_file) %>% tibble::as_tibble()
@@ -30,9 +31,10 @@ build_se_lab_tcga <- function(bValsselect_file, combmetadata_file, se_jhu_file,
     dplyr::select(lab_id, diagnosis, tumor, study)
 
   se.lab.tcga <- SummarizedExperiment::SummarizedExperiment(
-    assays  = S4Vectors::SimpleList(beta = t(lab.and.tcga)),
+    assays  = S4Vectors::SimpleList(beta = lab.and.tcga),
     colData = df
   )
+  colnames(se.lab.tcga) <- df$lab_id
 
   se.jhu <- readRDS(se_jhu_file)
   rowindex <- rownames(se.jhu) %in% rownames(se.lab.tcga)
@@ -43,8 +45,10 @@ build_se_lab_tcga <- function(bValsselect_file, combmetadata_file, se_jhu_file,
   )
   se.jhu3 <- se.jhu2[rownames(se.lab.tcga), ]
   df.addl.jhu <- dplyr::filter(manifest2, lab_id %in% colnames(se.jhu3)) %>%
-    dplyr::select(lab_id, diagnosis, tumor, study)
-  SummarizedExperiment::colData(se.jhu3) <- S4Vectors::DataFrame(df.addl.jhu)
+    dplyr::select(lab_id, diagnosis, tumor, study) %>%
+    dplyr::arrange(match(lab_id, colnames(se.jhu3)))
+  SummarizedExperiment::colData(se.jhu3) <- S4Vectors::DataFrame(df.addl.jhu,
+                                                                   row.names = colnames(se.jhu3))
 
   cbind(se.lab.tcga, se.jhu3)
 }
@@ -55,7 +59,7 @@ read_methylation_se <- function(file, manifest, discordant) {
   meth <- tibble(lab_id = colnames(se)) %>%
     mutate(platform = "methylation") %>%
     filter(!lab_id %in% discordant$lab_id)
-  meth2 <- select(manifest, -platform) %>%
+  meth2 <- dplyr::select(manifest, -platform) %>%
     left_join(meth, by = "lab_id") %>%
     filter(!is.na(platform))
   any(!meth$lab_id %in% meth2$lab_id)
@@ -74,8 +78,8 @@ read_methylation_se <- function(file, manifest, discordant) {
       "CGST1T_2",
       "CGST2T_2"
     )) %>%
-    select(-alt_id)
-  meth3 <- select(manifest, -platform) %>%
+    dplyr::select(-alt_id)
+  meth3 <- dplyr::select(manifest, -platform) %>%
     left_join(meth.fuzzymatch, by = "lab_id") %>%
     filter(!is.na(platform))
   meth4 <- bind_rows(meth2, meth3)
@@ -96,7 +100,7 @@ read_methylation_data <- function(file, tcga.file) {
     metadata2, metadata,
     join_by(lab_id)
   ) %>%
-    select(-c(Diagnosis, sampletype, Sample)) %>%
+    dplyr::select(-c(Diagnosis, sampletype, Sample)) %>%
     set_colnames(tolower(colnames(.))) %>%
     mutate(t.n = substr(tumor, 1, 1))
   md2 <- as(md, "DataFrame")
@@ -191,7 +195,7 @@ get_signetring <- function(signet.file, mt) {
     filter(mucinous == 0) %>%
     mutate(sample.id = paste0(sample.id, "A")) %>%
     dplyr::rename(Sample.ID = sample.id) %>%
-    left_join(select(mt, Sample.ID, Barcode.ID), by = "Sample.ID")
+    left_join(dplyr::select(mt, Sample.ID, Barcode.ID), by = "Sample.ID")
   signet.cases
 }
 
@@ -205,26 +209,26 @@ drop_signet <- function(meth.se, signet.file, match_table) {
 #' @export
 pairedMeth <- function(methprop, manifest) {
   manifest2 <- manifest %>%
-    select(
+    dplyr::select(
       subject_id, lab_id, tumor_type,
       tumor.normal
     ) %>%
     distinct()
   tumors <- filter(manifest, tumor.normal == "tumor")
   tumortypes <- tumors %>%
-    select(subject_id, lab_id, tumor_type) %>%
+    dplyr::select(subject_id, lab_id, tumor_type) %>%
     ungroup() %>%
     distinct()
-  tt <- select(tumortypes, -lab_id) %>%
+  tt <- dplyr::select(tumortypes, -lab_id) %>%
     distinct()
   meth2 <- methprop %>%
-    select(Sample_Name, propmeth) %>%
+    dplyr::select(Sample_Name, propmeth) %>%
     rename(lab_id = Sample_Name) %>%
     left_join(
       manifest2,
       join_by(lab_id)
     ) %>%
-    select(-tumor_type) %>%
+    dplyr::select(-tumor_type) %>%
     left_join(tt, by = "subject_id") %>%
     group_by(tumor_type) %>%
     nest()
@@ -257,7 +261,7 @@ project.cancer <- function(se.jhu, pc.tcga, ld.tcga, cancertype, use_pcs = 1:5) 
     t()
   jhu.pcs <- predict(pc.tcga, newdata = jhu.meth) %>%
     as_tibble() %>%
-    select(paste0("PC", use_pcs)) %>%
+    dplyr::select(paste0("PC", use_pcs)) %>%
     mutate(dx = se.jhu2$diagnosis)
   jhu.class.predictions <- predict(ld.tcga, newdata = jhu.pcs)
   jhu.x <- jhu.class.predictions$x[, c("LD1", "LD2")] %>%
@@ -281,7 +285,7 @@ project.cancer.prob <- function(se.jhu, pc.tcga, ld.tcga, cancertype, use_pcs = 
     t()
   jhu.pcs <- predict(pc.tcga, newdata = jhu.meth) %>%
     as_tibble() %>%
-    select(paste0("PC", use_pcs)) %>%
+    dplyr::select(paste0("PC", use_pcs)) %>%
     mutate(dx = se.jhu2$diagnosis)
   jhu.class.predictions <- predict(ld.tcga, newdata = jhu.pcs)
   jhu.x <- jhu.class.predictions$posterior %>%

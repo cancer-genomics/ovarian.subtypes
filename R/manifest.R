@@ -103,7 +103,7 @@ grep_bamfile <- function(i, manifest, tofix) {
   manifest <- manifest[index, ] %>%
     mutate(prev_id = id) %>%
     ungroup() %>%
-    select(lab_id, prev_id)
+    dplyr::select(lab_id, prev_id)
   return(manifest)
 }
 
@@ -133,7 +133,7 @@ repair_lab_id <- function(tofix, manifest, strip_Ex = FALSE) {
     ) %>%
     rename(stripped_name = x) %>%
     mutate(bam_local = basename(bam_local)) %>%
-    select(
+    dplyr::select(
       subject_id, lab_id, stripped_name,
       bam_local, tumor.normal
     ) %>%
@@ -145,10 +145,10 @@ repair_lab_id <- function(tofix, manifest, strip_Ex = FALSE) {
     )
   corrected <- tofix %>%
     left_join(possible_matches, by = "prev_id") %>%
-    select(lab_id, prev_id)
+    dplyr::select(lab_id, prev_id)
   alt1.updated <- tofix %>%
     left_join(corrected, by = "prev_id") %>%
-    select(lab_id, prev_id)
+    dplyr::select(lab_id, prev_id)
   if (strip_Ex) {
     alt1.updated$prev_id <- paste0(alt1.updated$prev_id, "_Ex")
   }
@@ -195,7 +195,7 @@ standardize_pgdx <- function(dat) {
       id2 = sapply(strsplit(pgdx_id2, "_"), "[", 2)
     ) %>%
     mutate(pgdx_id = ifelse(tumor.normal == "tumor", id2, id1)) %>%
-    select(-c(orig_id, id1, id2, pgdx_id2))
+    dplyr::select(-c(orig_id, id1, id2, pgdx_id2))
   dat2 <- filter(dat, !grepl("_Ex_PGDX", pgdx_id)) %>%
     bind_rows(two.ids) %>%
     mutate(
@@ -235,7 +235,7 @@ standardize_pgdx2 <- function(dat) {
       id2 = sapply(strsplit(pgdx_id2, "_"), "[", 2)
     ) %>%
     mutate(pgdx_id = ifelse(tumor.normal == "tumor", id2, id1)) %>%
-    select(-c(orig_id, id1, id2, pgdx_id2))
+    dplyr::select(-c(orig_id, id1, id2, pgdx_id2))
   dat2 <- filter(dat, !grepl("_Ex_PGDX", pgdx_id)) %>%
     bind_rows(two.ids) %>%
     mutate(
@@ -245,15 +245,15 @@ standardize_pgdx2 <- function(dat) {
       pgdx_id = str_replace_all(pgdx_id, "_Ex_hg19", ""),
       pgdx_id = str_replace_all(pgdx_id, " $", "")
     ) %>%
-    select(-two.ids) %>%
+    dplyr::select(-two.ids) %>%
     unite(pgdx_id2, c(pgdx_id, platform), sep = "_") %>%
     mutate(pgdx_id = str_replace_all(pgdx_id2, "WES$", "Ex")) %>%
-    select(-pgdx_id2)
+    dplyr::select(-pgdx_id2)
   return(dat2)
 }
 
 subject_id2 <- function(manifest) {
-  one.to.many <- select(manifest, subject_id, genotype_id, platform) %>%
+  one.to.many <- dplyr::select(manifest, subject_id, genotype_id, platform) %>%
     group_by(genotype_id, platform) %>%
     summarize(
       one_to_many = length(unique(subject_id)) > 1,
@@ -270,7 +270,7 @@ subject_id2 <- function(manifest) {
 }
 
 select_manifest_columns <- function(manifest) {
-  manifest3 <- select(
+  manifest3 <- dplyr::select(
     manifest, pgdx_id, lab_id,
     subject_id, bamfile, tumor.normal,
     bam_local,
@@ -287,7 +287,7 @@ update_manifest_ids <- function(manifest) {
       subject_id = subject_id2,
       subject_id2 = temp
     ) %>%
-    select(-temp)
+    dplyr::select(-temp)
 }
 
 discordant_tumor_type <- function(manifest4) {
@@ -313,7 +313,7 @@ remove_any_duplicates <- function(manifest4) {
       uid,
       lab_id
     )) %>%
-    select(-uid) %>%
+    dplyr::select(-uid) %>%
     filter(!duplicated(lab_id)) %>%
     distinct()
   manifest5
@@ -322,7 +322,7 @@ remove_any_duplicates <- function(manifest4) {
 #' @export
 read_facets <- function(file) {
   facets <- read_tsv(file, show_col_types = FALSE) %>%
-    select(Sample) %>%
+    dplyr::select(Sample) %>%
     distinct()
   facets
 }
@@ -376,7 +376,7 @@ join_facets_to_manifest1 <- function(facets, manifest.list) {
     facets.matched2,
     facets.matched3
   ) %>%
-    select(facet_id, subject_id, lab_id)
+    dplyr::select(facet_id, subject_id, lab_id)
   manifest7 <- left_join(manifest6, facets2, by = c("subject_id", "lab_id"))
   ix <- grep("177T", manifest7$lab_id)
   A <- manifest7[ix, ]
@@ -387,7 +387,7 @@ join_facets_to_manifest2 <- function(manifest7, directory.listing) {
   rename <- dplyr::rename
   facets <- tibble(Sample = directory.listing) %>%
     mutate(Sample = basename(Sample))
-  man <- select(manifest7, subject_id, lab_id, pgdx_id)
+  man <- dplyr::select(manifest7, subject_id, lab_id, pgdx_id)
   matched0 <- inner_join(facets, man,
     by = c("Sample" = "lab_id")
   ) %>%
@@ -401,9 +401,9 @@ join_facets_to_manifest2 <- function(manifest7, directory.listing) {
       pgdx_id = Sample,
       facet_id = pgdx_id
     ) %>%
-    select(-Sample)
+    dplyr::select(-Sample)
   notmatched <- filter(tmp, !Sample %in% matched1$pgdx_id)
-  tmp <- select(notmatched, Sample) %>%
+  tmp <- dplyr::select(notmatched, Sample) %>%
     distinct() %>%
     mutate(
       uid = NA,
@@ -439,15 +439,15 @@ join_facets_to_manifest2 <- function(manifest7, directory.listing) {
   matched2 <- left_join(notmatched2, tmp3, by = "Sample") %>%
     rename(facet_id = Sample) %>%
     left_join(man, by = "lab_id") %>%
-    select(-uid)
+    dplyr::select(-uid)
   tmp2 <- filter(tmp, is.na(uid)) %>%
-    select(-uid) %>%
+    dplyr::select(-uid) %>%
     rename(old_directory = Sample) %>%
     mutate(
       facet_id = NA,
       lab_id = NA
     )
-  man <- select(manifest7, subject_id, lab_id, pgdx_id, subject_id2, tumor.normal) %>%
+  man <- dplyr::select(manifest7, subject_id, lab_id, pgdx_id, subject_id2, tumor.normal) %>%
     filter(tumor.normal == "tumor")
   for (i in seq_len(nrow(tmp2))) {
     id <- tmp2$old_directory[i]
@@ -457,7 +457,7 @@ join_facets_to_manifest2 <- function(manifest7, directory.listing) {
   }
   matched3 <- tmp2 %>%
     mutate(subject_id = facet_id, pgdx_id = NA) %>%
-    select(-old_directory)
+    dplyr::select(-old_directory)
   m <- bind_rows(
     matched0,
     matched1,
@@ -467,11 +467,11 @@ join_facets_to_manifest2 <- function(manifest7, directory.listing) {
   manifest.notwgs <- filter(manifest7, is.na(facet_id))
   manifest.wes <- filter(manifest7, !is.na(facet_id))
   manifest.notwgs2 <- left_join(
-    select(
+    dplyr::select(
       manifest.notwgs,
       -facet_id
     ),
-    select(m, lab_id, facet_id),
+    dplyr::select(m, lab_id, facet_id),
     by = "lab_id"
   )
   manifest8 <- bind_rows(manifest.wes, manifest.notwgs2) %>%
@@ -491,9 +491,9 @@ check_ids <- function(clinical, manifest) {
 clean_manifest <- function(manifest2, cdat2) {
   manifest3 <- select_manifest_columns(manifest2)
   manifest4 <- update_manifest_ids(manifest3) %>%
-    select(-tumor_type) %>%
+    dplyr::select(-tumor_type) %>%
     left_join(
-      select(
+      dplyr::select(
         cdat2, lab_id, tumor_type,
         discordant_tumor_type
       ),
@@ -503,7 +503,7 @@ clean_manifest <- function(manifest2, cdat2) {
   manifest5 <- remove_any_duplicates(manifest4)
   stopifnot(!any(duplicated(manifest5$lab_id)))
   manifest6 <- filter(manifest5, tumor.normal == "tumor") %>%
-    select(subject_id, lab_id, pgdx_id)
+    dplyr::select(subject_id, lab_id, pgdx_id)
   list(key = manifest6, manifest = manifest5)
 }
 
@@ -556,15 +556,15 @@ read_facets2 <- function(...) {
   dots <- list(...)
   facets_purity <- lapply(dots, read.delim) %>%
     bind_rows() %>%
-    select(facet_id = Sample, purity = Purity, genotype_id = Genotype.ID) %>%
+    dplyr::select(facet_id = Sample, purity = Purity, genotype_id = Genotype.ID) %>%
     mutate(is_na_purity = is.na(purity))
   return(facets_purity)
 }
 
 add_facets_purity <- function(manifest9, facets_purity) {
   manifest10 <- manifest9[!is.na(manifest9$facet_id), ]
-  manifest11 <- left_join(manifest10, select(facets_purity, -genotype_id), by = "facet_id") %>%
-    left_join(select(facets_purity, -facet_id), by = join_by("facet_id" == "genotype_id")) %>%
+  manifest11 <- left_join(manifest10, dplyr::select(facets_purity, -genotype_id), by = "facet_id") %>%
+    left_join(dplyr::select(facets_purity, -facet_id), by = join_by("facet_id" == "genotype_id")) %>%
     mutate(
       purity = case_when(is.na(purity.x) & is.na(purity.y) ~ NA_real_,
         is.na(purity.x) & !is.na(purity.y) ~ purity.y,
@@ -578,8 +578,8 @@ add_facets_purity <- function(manifest9, facets_purity) {
       )
     ) %>%
     replace_na(list(is_na_purity = FALSE)) %>%
-    select(-c(purity.x, purity.y, is_na_purity.x, is_na_purity.y))
-  manifest <- left_join(manifest9, select(manifest11, lab_id, purity, is_na_purity))
+    dplyr::select(-c(purity.x, purity.y, is_na_purity.x, is_na_purity.y))
+  manifest <- left_join(manifest9, dplyr::select(manifest11, lab_id, purity, is_na_purity))
   return(manifest)
 }
 

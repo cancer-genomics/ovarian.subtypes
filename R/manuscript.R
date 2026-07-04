@@ -27,7 +27,7 @@ number_tumor_types <- function(mfest, hmut) {
   w.hmut <- mfest %>%
     group_by(tumor_type) %>%
     summarize(n = length(unique(subject_id)))
-  hmut2 <- left_join(hmut, select(mfest, subject_id, lab_id),
+  hmut2 <- left_join(hmut, dplyr::select(mfest, subject_id, lab_id),
     by = "lab_id"
   )
   wo.hmut <- mfest %>%
@@ -185,7 +185,7 @@ num_hypermut <- function(tumor.type, stab3, stab4,
     map(function(x) x[1, ])
   tumors <- unnest(tmp, "data")
   tumortypes <- tumors %>%
-    select(subject_id, lab_id, tumor_type) %>%
+    dplyr::select(subject_id, lab_id, tumor_type) %>%
     distinct()
   nhypermut.wes <- stab3 %>%
     group_by(lab_id, tumor_type) %>%
@@ -316,7 +316,7 @@ tumors_with_drivers <- function(stab, manifest, drivers, tumor.types) {
       .groups = "drop"
     ) %>%
     ungroup()
-  drivers2 <- select(manifest, lab_id, tumor_type) %>%
+  drivers2 <- dplyr::select(manifest, lab_id, tumor_type) %>%
     filter(tumor_type %in% tumor.types) %>%
     left_join(drivers, by = c("lab_id", "tumor_type")) %>%
     mutate(has_driver = ifelse(is.na(has_driver), FALSE, has_driver)) %>%
@@ -423,7 +423,7 @@ get_ccnd1 <- function(idat.mucinous) {
 get_erbb2 <- function(idat.mucinous, tumors) {
   tumor.levels <- c("Ovarian mucinous", "Colorectal mucinous")
   tumortypes <- tumors %>%
-    select(subject_id, lab_id, tumor_type) %>%
+    dplyr::select(subject_id, lab_id, tumor_type) %>%
     ungroup() %>%
     distinct()
   erbb2 <- idat.mucinous %>%
@@ -477,7 +477,7 @@ get_crc_drivers <- function(idat.mucinous) {
 number_crc_not_hypermutated <- function(idat.mucinous, hypermut) {
   total.crc <- idat.mucinous %>%
     filter(tumor_type == "Colorectal mucinous") %>%
-    select(lab_id) %>%
+    dplyr::select(lab_id) %>%
     distinct() %>%
     filter(!lab_id %in% hypermut$lab_id) %>%
     nrow()
@@ -577,7 +577,7 @@ read_s2 <- function(s2file) {
 
 subset_to_ovmuc <- function(stab2, ovmuc_ids) {
   ovmuc <- filter(stab2, subject_id %in% ovmuc_ids) %>%
-    select(subject_id, lab_id, tumor.normal) %>%
+    dplyr::select(subject_id, lab_id, tumor.normal) %>%
     filter(tumor.normal == "tumor")
 }
 
@@ -593,7 +593,7 @@ read_bayes <- function(bfile) {
 posterior_mean <- function(bayes, gene.id, comparison) {
   post.mean <- bayes %>%
     filter(gene == gene.id, tumors == comparison) %>%
-    select(mean) %>%
+    dplyr::select(mean) %>%
     round(2) %>%
     pull(mean)
   post.mean
@@ -602,7 +602,7 @@ posterior_mean <- function(bayes, gene.id, comparison) {
 posterior_ci <- function(bayes, gene.id, comparison) {
   post.ci <- bayes %>%
     filter(gene == gene.id, tumors == comparison) %>%
-    select(`5%`, `95%`) %>%
+    dplyr::select(`5%`, `95%`) %>%
     round(2) %>%
     paste(collapse = "-")
   post.ci
@@ -611,7 +611,7 @@ posterior_ci <- function(bayes, gene.id, comparison) {
 posterior_ci2 <- function(bayes, gene.id, comparison) {
   post.ci <- bayes %>%
     filter(gene == gene.id, tumors == comparison) %>%
-    select(`5%`, `95%`) %>%
+    dplyr::select(`5%`, `95%`) %>%
     mutate(across(everything(), function(x) -round(x, 2))) %>%
     rev() %>%
     paste(collapse = "-")
@@ -694,13 +694,13 @@ remove_brackets_parameter <- function(bayes.out) {
       tmp = str_replace_all(tmp, "\\]", ""),
       parameter = tmp
     ) %>%
-    select(-tmp)
+    dplyr::select(-tmp)
   bayes.out2
 }
 
 summarize_group1_mutation_rate <- function(bayes.out2) {
   group1 <- filter(bayes.out2, parameter == "theta1") %>%
-    select(
+    dplyr::select(
       gene, pathway, ct,
       "5%", "50%", "95%"
     ) %>%
@@ -714,7 +714,7 @@ summarize_group1_mutation_rate <- function(bayes.out2) {
 
 summarize_group2_mutation_rate <- function(bayes.out2) {
   group2 <- filter(bayes.out2, parameter == "theta2") %>%
-    select(
+    dplyr::select(
       gene, pathway, ct,
       "5%", "50%", "95%"
     ) %>%
@@ -727,7 +727,7 @@ summarize_group2_mutation_rate <- function(bayes.out2) {
 }
 
 num_subj_w_meth <- function(manifest) {
-  select(
+  dplyr::select(
     methylation, subject_id, lab_id,
     tumor.normal, tumor_type
   ) %>%
@@ -757,7 +757,7 @@ prop_methylated_anova <- function(mfile) {
 
 #' @export
 read_lda <- function(lda.file, manifest) {
-  mfest <- select(manifest, lab_id, subject_id)
+  mfest <- dplyr::select(manifest, lab_id, subject_id)
   probLDA <- read_csv(lda.file, show_col_types = FALSE) %>%
     mutate(tumor.normal = factor(tumor.normal, c("Normal", "Tumor"))) %>%
     left_join(mfest, by = "lab_id") %>%
@@ -775,7 +775,7 @@ read_lda <- function(lda.file, manifest) {
 #'
 #' @export
 process_lda_posteriors <- function(posteriors, manifest) {
-  mfest <- select(manifest, lab_id, subject_id)
+  mfest <- dplyr::select(manifest, lab_id, subject_id)
   posteriors %>%
     mutate(tumor.normal = factor(tumor.normal, c("Normal", "Tumor"))) %>%
     left_join(mfest, by = "lab_id") %>%
@@ -791,13 +791,13 @@ ovarian_muc_lda <- function(probLDA) {
 #' @export
 endometrial_like <- function(ov.muc) {
   endo.like <- filter(ov.muc, `Uterine endometrial` > 0.6) %>%
-    select(`Uterine endometrial`, tumor.normal, lab_id, subject_id)
+    dplyr::select(`Uterine endometrial`, tumor.normal, lab_id, subject_id)
 }
 
 #' @export
 mucinous_like <- function(ov.muc) {
   filter(ov.muc, prob.mucinous >= 0.6) %>%
-    select(lab_id, subject_id)
+    dplyr::select(lab_id, subject_id)
 }
 
 #' @export
@@ -816,7 +816,7 @@ summarize_wnt_pi3k <- function(clinical, idat.endometrioid,
       join_by(lab_id)
     ) %>%
     filter(!is.na(os)) %>%
-    select(lab_id, tumor_type, os, sex, stage, is_alive, wnt, pi3k) %>%
+    dplyr::select(lab_id, tumor_type, os, sex, stage, is_alive, wnt, pi3k) %>%
     mutate(
       event = ifelse(is_alive, 0, 1),
       wnt = ifelse(is.na(wnt), 0, wnt),
@@ -928,7 +928,7 @@ odds_ratio <- function(gene, x) {
 #' @export
 number_wes_tumors <- function(manifest) {
   filter(manifest, platform == "WES") %>%
-    select(subject_id, lab_id, tumor.normal) %>%
+    dplyr::select(subject_id, lab_id, tumor.normal) %>%
     distinct() %>%
     filter(tumor.normal == "tumor") %>%
     nrow()
@@ -937,7 +937,7 @@ number_wes_tumors <- function(manifest) {
 #' @export
 number_wgs_tumors <- function(manifest) {
   filter(manifest, platform == "WGS") %>%
-    select(subject_id, lab_id, tumor.normal) %>%
+    dplyr::select(subject_id, lab_id, tumor.normal) %>%
     distinct() %>%
     filter(tumor.normal == "tumor") %>%
     nrow()
@@ -964,7 +964,7 @@ median_coverage <- function(dat) {
 #' @export
 tumor_types <- function(tumors) {
   tumortypes <- tumors %>%
-    select(subject_id, lab_id, tumor_type, tumor.normal) %>%
+    dplyr::select(subject_id, lab_id, tumor_type, tumor.normal) %>%
     distinct()
   tumortypes
 }
@@ -981,7 +981,7 @@ read_stable <- function(filename, tumortypes, manifest) {
 #' @export
 number_survival <- function(clinical) {
   n.surv <- clinical %>%
-    select(subject_id, lab_id, os) %>%
+    dplyr::select(subject_id, lab_id, os) %>%
     filter(!is.na(os)) %>%
     nrow()
   n.surv
@@ -1023,7 +1023,7 @@ summarize_subtypes <- function(mfest, hmut) {
 purity_numbermut <- function(stab3, stab4, mfest) {
   mfest2 <- mfest %>%
     filter(tumor.normal == "tumor") %>%
-    select(lab_id, purity)
+    dplyr::select(lab_id, purity)
   stab <- bind_rows(stab3, stab4) %>%
     group_by(lab_id) %>%
     summarize(nmut = n())
@@ -1036,7 +1036,7 @@ purity_numbermut <- function(stab3, stab4, mfest) {
 fig5_manifest <- function(manifest) {
   manifest2 <- manifest %>%
     cancer_names() %>%
-    select(-tumor_type) %>%
+    dplyr::select(-tumor_type) %>%
     rename(tumor_type = tumor) %>%
     filter(
       !lab_id %in% hypermut$lab_id,

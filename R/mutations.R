@@ -21,7 +21,7 @@ jags_data <- function(gdat) {
       total = mutation + methylation + fusion + copynumber,
       is_altered = ifelse(total > 0, 1L, 0L)
     ) %>%
-    select(gene_symbol, internal_id, tumor_type, is_altered) %>%
+    dplyr::select(gene_symbol, internal_id, tumor_type, is_altered) %>%
     mutate(
       tumor_type = ifelse(tumor_type == "Ovarian endometrioid",
         "ovarian",
@@ -43,11 +43,11 @@ jags_data <- function(gdat) {
       .groups = "drop"
     )
   gdat3 <- gdat2 %>%
-    select(gene_symbol, internal_id, is_altered) %>%
+    dplyr::select(gene_symbol, internal_id, is_altered) %>%
     spread(gene_symbol, is_altered) %>%
     left_join(tumortype, by = "internal_id")
-  X <- select(ungroup(gdat3), -internal_id) %>%
-    select(-tumor_type) %>%
+  X <- dplyr::select(ungroup(gdat3), -internal_id) %>%
+    dplyr::select(-tumor_type) %>%
     as.matrix()
   Y <- ifelse(gdat3$tumor_type == "ovarian", 1, 0)
   is_hypermutator <- X[, "hypermutator"] == 1
@@ -75,9 +75,9 @@ contingency_table <- function(x, Ns) {
     set_colnames(c("tumor_type", "wt", "mt")) %>%
     mutate(n = mt + wt)
   m2 <- left_join(Ns, m, by = c("tumor_type", "n")) %>%
-    select(tumor_type, mt, n)
+    dplyr::select(tumor_type, mt, n)
   m2[is.na(m2)] <- 0
-  m <- select(m2, -tumor_type) %>%
+  m <- dplyr::select(m2, -tumor_type) %>%
     as.matrix()
   rownames(m) <- m2$tumor_type
   m
@@ -131,7 +131,7 @@ slice_params <- function(x) {
     as_tibble() %>%
     mutate(parameter = nms) %>%
     filter(grepl("^beta", parameter) | grepl("^theta", parameter)) %>%
-    select(
+    dplyr::select(
       parameter, mean, se_mean, sd, `2.5%`,
       `5%`, `50%`, `95%`, `97.5%`, `n_eff`, Rhat
     )
@@ -143,7 +143,7 @@ slice_params <- function(x) {
 complete_table <- function(x, Ns, tumor_order) {
   x2 <- full_join(Ns, x, by = c("tumor_type", "n"))
   x2[is.na(x2)] <- 0L
-  x3 <- select(x2, tumor_type, mt, n)
+  x3 <- dplyr::select(x2, tumor_type, mt, n)
   x4 <- left_join(tumor_order, x3, by = "tumor_type")
   x5 <- as.matrix(x4[, 2:3])
   rownames(x5) <- x4$tumor_type
@@ -213,7 +213,7 @@ endo <- function() c("Ovarian endometrioid", "Uterine endometrioid")
 #' replace lab_id with lab_id2 when not equal
 #' @export
 swap_lab_id <- function(x, y) {
-  y <- select(y, lab_id, lab_id2)
+  y <- dplyr::select(y, lab_id, lab_id2)
   isf <- is.factor(x$lab_id)
   if (isf) {
     levs <- tibble(lab_id = levels(x$lab_id)) %>%
@@ -222,7 +222,7 @@ swap_lab_id <- function(x, y) {
   }
   x.y <- inner_join(x, y, by = "lab_id") %>%
     mutate(lab_id = ifelse(lab_id == lab_id2, lab_id, lab_id2)) %>%
-    select(-lab_id2)
+    dplyr::select(-lab_id2)
   if (isf) {
     x.y$lab_id <- factor(x.y$lab_id, levs2)
   }
@@ -230,7 +230,7 @@ swap_lab_id <- function(x, y) {
 }
 
 order_samples <- function(x, gene.levels) {
-  x2 <- select(x, lab_id, gene_symbol) %>%
+  x2 <- dplyr::select(x, lab_id, gene_symbol) %>%
     mutate(
       hypermutator = gene_symbol == "hypermutator",
       gene1.alt = gene_symbol == gene.levels[1],
@@ -270,7 +270,7 @@ read_pathways <- function(pathway.file, tumor.type) {
   }
   pathways <- pathways %>%
     filter(tumor_type == tumor.type) %>%
-    select(-tumor_type) %>%
+    dplyr::select(-tumor_type) %>%
     mutate(
       pathway = str_replace_all(pathway, "TGFBR pathway", "TGFBR"),
       pathway = str_replace_all(pathway, "BRCA", "DNA repair")
@@ -286,7 +286,7 @@ read_pathways <- function(pathway.file, tumor.type) {
 }
 
 read_integrated_data <- function(manifest, pathways) {
-  tumortypes <- select(manifest, lab_id, tumor_type) %>%
+  tumortypes <- dplyr::select(manifest, lab_id, tumor_type) %>%
     ungroup() %>%
     distinct()
   idat <- here(
@@ -304,7 +304,7 @@ read_integrated_data <- function(manifest, pathways) {
 
 read_idat <- function(idat.file, manifest, pathways) {
   rename <- dplyr::rename
-  tumortypes <- select(manifest, lab_id, tumor_type) %>%
+  tumortypes <- dplyr::select(manifest, lab_id, tumor_type) %>%
     ungroup() %>%
     distinct()
   idat <- idat.file %>%
@@ -318,7 +318,7 @@ read_idat <- function(idat.file, manifest, pathways) {
       "mutation", alteration
     )) %>%
     cancer_names() %>%
-    select(-tumor_type) %>%
+    dplyr::select(-tumor_type) %>%
     rename(tumor_type = tumor)
 
   idat
@@ -484,9 +484,9 @@ order_gi <- function(idat, manifest) {
 
 remove_duplicate_samples <- function(idat2, manifest) {
   dup.samples <- idat2 %>%
-    select(lab_id) %>%
+    dplyr::select(lab_id) %>%
     distinct() %>%
-    left_join(select(manifest, subject_id, lab_id), by = "lab_id") %>%
+    left_join(dplyr::select(manifest, subject_id, lab_id), by = "lab_id") %>%
     group_by(subject_id) %>%
     nest()
   nr <- map_dbl(dup.samples$data, nrow)

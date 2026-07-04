@@ -34,7 +34,7 @@ clean_colnames <- function(x) {
 }
 
 clinical_data <- function(x) {
-  x2 <- select(
+  x2 <- dplyr::select(
     x,
     lab_id,
     subject_id2,
@@ -106,11 +106,11 @@ join_clinical_data <- function(clinical.data, sdat3) {
     mutate(age = ifelse(age_at_diagnosis_or_surgery == "NA", NA,
       as.integer(age_at_diagnosis_or_surgery)
     )) %>%
-    select(-age_at_diagnosis_or_surgery) %>%
+    dplyr::select(-age_at_diagnosis_or_surgery) %>%
     mutate(stage = ifelse(is.na(stage), stage_at_first_diagnosis, stage)) %>%
-    select(-stage_at_first_diagnosis) %>%
+    dplyr::select(-stage_at_first_diagnosis) %>%
     mutate(age_surgery = ifelse(is.na(age_surgery), age, age_surgery)) %>%
-    select(-age) %>%
+    dplyr::select(-age) %>%
     mutate(
       is_alive = ifelse(is_alive == 0, TRUE, FALSE),
       pfs = ifelse(pfs == "-", NA, as.numeric(pfs))
@@ -160,7 +160,7 @@ format_cancer_stage <- function(cdat) {
 
 check_lab_ids <- function(sdat3, manifest2) {
   stopifnot(all(sdat3$lab_id %in% manifest2$lab_id))
-  test <- select(
+  test <- dplyr::select(
     manifest2, lab_id, stage_at_first_diagnosis,
     age_at_diagnosis_or_surgery, sex, tumor_type
   ) %>%
@@ -169,9 +169,9 @@ check_lab_ids <- function(sdat3, manifest2) {
       age.y = ifelse(age.y == "NA", NA, age.y),
       age.y = as.integer(age.y)
     ) %>%
-    select(-age_at_diagnosis_or_surgery)
+    dplyr::select(-age_at_diagnosis_or_surgery)
   check <- left_join(sdat3, test, by = "lab_id") %>%
-    select(
+    dplyr::select(
       lab_id, age_dx, age.y, age_surgery,
       sex.x, sex.y,
       tumor_type.x, tumor_type.y, stage, stage_at_first_diagnosis
@@ -181,7 +181,7 @@ check_lab_ids <- function(sdat3, manifest2) {
 
 select_clinical_columns <- function(cdat) {
   cdat2 <- cdat %>%
-    select(
+    dplyr::select(
       subject_id, lab_id, sex,
       tumor.normal, tumor_type,
       stage, smoker, age_dx,
@@ -251,7 +251,7 @@ read_dx_tx_dates <- function(dtfile) {
       year_of_dx = pick_notna(year_of_dx),
       year_of_surgery = pick_notna(year_of_surgery)
     )
-  select(dt3, subject_id = CGID, year_of_dx, year_of_surgery)
+  dplyr::select(dt3, subject_id = CGID, year_of_dx, year_of_surgery)
 }
 
 join_dx_tx_dates <- function(countrycoll, dx_tx_dates) {

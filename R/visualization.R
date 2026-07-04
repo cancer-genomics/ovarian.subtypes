@@ -61,7 +61,7 @@ plot_jhu_lda <- function(all2, ell, manifest, alpha_el = 0.2) {
                     "Ovarian mucinous",
                     "Ovarian endometrioid")
 
-  manifest2 <- select(manifest, subject_id, lab_id) %>%
+  manifest2 <- dplyr::select(manifest, subject_id, lab_id) %>%
     filter(lab_id %in% all2$lab_id) %>%
     distinct()
 
