@@ -36,7 +36,9 @@ build_se_lab_tcga <- function(bValsselect_file, combmetadata_file, se_jhu_file,
   )
   colnames(se.lab.tcga) <- df$lab_id
 
-  se.jhu <- readRDS(se_jhu_file)
+  ## Step 2 passes a file path (frozen se.rds); Step 4 passes the freshly
+  ## regenerated `orse` object in memory. Accept either.
+  se.jhu <- if (is.character(se_jhu_file)) readRDS(se_jhu_file) else se_jhu_file
   rowindex <- rownames(se.jhu) %in% rownames(se.lab.tcga)
   colindex <- which(!colnames(se.jhu) %in% colnames(se.lab.tcga))
   se.jhu2 <- se.jhu[rowindex, colindex]
@@ -51,6 +53,147 @@ build_se_lab_tcga <- function(bValsselect_file, combmetadata_file, se_jhu_file,
                                                                    row.names = colnames(se.jhu3))
 
   cbind(se.lab.tcga, se.jhu3)
+}
+
+## ---------------------------------------------------------------------------
+## Step 4 of the methylation provenance plan: regenerate the JHU `orse`
+## (output/methylation.Rmd/se.rds, the grandparent input to build_se_lab_tcga)
+## from the two batches' bVals/mVals matrices + sample sheets + frozen manifest.
+##
+## Ported verbatim from code/methylation.Rmd (the manual Step-4 producer). The
+## SE-building primitives (createseobject/createoriginalSE and the merge/clean
+## helpers) already live in R/assay_functions.R; these functions are the thin
+## orchestration the Rmd performed inline. CLUSTER-ONLY: every input below is
+## on JHPCE, not in the local checkout.
+## ---------------------------------------------------------------------------
+
+## Integer-encode a beta/M matrix, preserving dimnames. Verbatim from the
+## methylation.Rmd `list_assays` chunk (defined inline there). beta uses
+## scale=1000, M scale=100, the binary assays scale=1 -- build_se_lab_tcga()
+## later divides the beta assay back by 1000, so this scaling is load-bearing.
+tointeger <- function(x, scale = 1) {
+  dns <- dimnames(x)
+  if (scale == 1) {
+    xi <- matrix(as.integer(x), nrow(x), ncol(x))
+  } else {
+    xx <- round(x * scale, 0)
+    xi <- matrix(as.integer(xx), nrow(x), ncol(x))
+  }
+  dimnames(xi) <- dns
+  xi
+}
+
+## Build the batch-2 `targets` sample table (the methylation.Rmd `create_targets`
+## chunk, which its header flags "does not work"). Ported faithfully -- the
+## historical failure mode is unknown and can only be diagnosed against the live
+## batch-2 sample sheet on the cluster. VERIFY ON CLUSTER: (a) read.metharray.sheet
+## finds exactly one CSV under baseDir and parses it; (b) the merge with
+## methdat082620.csv preserves the expected batch-2 samples; (c) the resulting
+## column names/order line up with the batch-1 `targets1` so mergetargets()'s
+## rbind() succeeds (mergetargets reorders targets1 columns to match `targets`).
+build_batch2_targets <- function(baseDir, methdat_file) {
+  targets <- minfi::read.metharray.sheet(baseDir)
+  sampdat <- utils::read.csv(methdat_file)
+  sampdat <- sampdat[, c(1, 3:7)]
+  colnames(sampdat)[1] <- "Sample_Name"
+  targets <- merge(targets, sampdat, by = "Sample_Name")
+  targets$sampletype <- paste0(targets$Diagnosis, "_", targets$T.N)
+  tibble::as_tibble(targets)
+}
+
+## Regenerate `orse` exactly as code/methylation.Rmd's list_assays + results
+## chunks do. Returns the object that was saved to se.rds (assays trimmed to
+## beta+M, integer-encoded). The intermediate tumor-only `se` the Rmd also
+## builds is dead code for se.rds (only fed the eval=FALSE proptest) and is
+## omitted. NOTE cutoff.beta = 0.3 -- the Rmd overrides the 0.2 default.
+build_orse <- function(bVals081820_file, mVals081820_file,
+                       bVals_file, mVals_file, targets1_file,
+                       methmanifest_file, baseDir, methdat_file) {
+  ## Step 4 passes file paths (frozen matrices); Step 5 passes the freshly
+  ## regenerated matrices/targets in memory. Accept either.
+  rp <- function(x) if (is.character(x)) readRDS(x) else x
+  bVals    <- rp(bVals081820_file)   # batch 2 beta
+  mVals    <- rp(mVals081820_file)   # batch 2 M
+  ann850k  <- minfi::getAnnotation(
+    IlluminaHumanMethylationEPICanno.ilm10b2.hg19::IlluminaHumanMethylationEPICanno.ilm10b2.hg19)
+  mVals1   <- rp(mVals_file)         # batch 1 M
+  bVals1   <- rp(bVals_file)         # batch 1 beta
+  targets1 <- rp(targets1_file)      # batch 1 targets (raw read.metharray.sheet)
+  man1     <- rp(methmanifest_file)  # frozen; no code producer
+  targets  <- build_batch2_targets(baseDir, methdat_file)
+
+  assays <- list(bVals, mVals, ann850k, baseDir,
+                 mVals1, bVals1, targets1, targets, man1)
+  names(assays) <- c("bVals", "mVals", "ann850k", "baseDir",
+                     "mVals1", "bVals1", "targets1", "targets", "man1")
+
+  assays2 <- createseobject(assays, cutoff.beta = 0.3, cutoff.M = -1.5)
+  orse <- createoriginalSE(assays2)
+
+  SummarizedExperiment::assays(orse)[[3]] <- tointeger(SummarizedExperiment::assays(orse)[[3]])
+  SummarizedExperiment::assays(orse)[[4]] <- tointeger(SummarizedExperiment::assays(orse)[[4]])
+  SummarizedExperiment::assays(orse)[[1]] <- tointeger(SummarizedExperiment::assays(orse)[[1]], scale = 1000)
+  SummarizedExperiment::assays(orse)[[2]] <- tointeger(SummarizedExperiment::assays(orse)[[2]], scale = 100)
+
+  SummarizedExperiment::assays(orse) <- SummarizedExperiment::assays(orse)[1:2]
+  orse
+}
+
+## ---------------------------------------------------------------------------
+## Step 5 of the methylation provenance plan: regenerate the bVals/mVals
+## matrices from the JHU IDATs. Ported from the recovered batch scripts
+## (code/methylation/{Methylation_data_script.R, differential_methylation_061119.R,
+## preprocess_meth_0717.R}). Both batches share ONE filter chain (below); they
+## differ only at I/O (batch 1 uses read.metharray.exp(force=TRUE); batch 2 does
+## not). No set.seed is needed -- the matrices are deterministic given a fixed
+## minfi/annotation version. CLUSTER-ONLY. minfi is NOT bit-reproducible across
+## versions, so Step-5 matrix comparisons use TOLERANCE (see compare_matrix()),
+## and pinned minfi/annotation versions must be recorded before running.
+## ---------------------------------------------------------------------------
+
+## Shared cold path: funnorm -> detP(<0.01 in ALL samples) -> drop chrX/chrY ->
+## dropLociWithSnps(defaults) -> drop cross-reactive probes -> getBeta/getM.
+## Filter ORDER is load-bearing for probe membership. `xreactive_file` is the
+## 450K 48639-non-specific-probes-Illumina450k.csv from the
+## methylationArrayAnalysis package extdata (applied to EPIC data in the
+## original, faithfully reproduced here).
+funnorm_filter_matrices <- function(RGSet, xreactive_file) {
+  ann850k <- minfi::getAnnotation(
+    IlluminaHumanMethylationEPICanno.ilm10b2.hg19::IlluminaHumanMethylationEPICanno.ilm10b2.hg19)
+  detP <- minfi::detectionP(RGSet)
+  mSetSF <- minfi::preprocessFunnorm(RGSet)                    # default args
+  detP <- detP[match(minfi::featureNames(mSetSF), rownames(detP)), ]
+  keep <- rowSums(detP < 0.01) == ncol(mSetSF)                 # p<0.01 in all samples
+  mSetSqFlt <- mSetSF[keep, ]
+  sexprobes <- ann850k$Name[ann850k$chr %in% c("chrX", "chrY")]
+  mSetSqFlt <- mSetSqFlt[!(minfi::featureNames(mSetSqFlt) %in% sexprobes), ]
+  mSetSqFlt <- minfi::dropLociWithSnps(mSetSqFlt)              # default args
+  xReactiveProbes <- utils::read.csv(xreactive_file)
+  mSetSqFlt <- mSetSqFlt[!(minfi::featureNames(mSetSqFlt) %in% xReactiveProbes$TargetID), ]
+  list(bVals = minfi::getBeta(mSetSqFlt), mVals = minfi::getM(mSetSqFlt))
+}
+
+## Batch 1 (endomuc/methylation IDATs): read.metharray.exp(force=TRUE). Returns
+## the raw sheet `targets` (=targets.rds, consumed by build_orse) alongside the
+## matrices. WATCH-OUT: createseobject()'s clean.targets() applies POSITIONAL
+## fixes (rows 3/12/31/38), so the regenerated sheet row order must match the
+## frozen targets.rds -- verify on cluster.
+build_batch1_matrices <- function(baseDir, xreactive_file) {
+  targets <- minfi::read.metharray.sheet(baseDir)
+  RGSet <- minfi::read.metharray.exp(targets = targets, force = TRUE)
+  minfi::sampleNames(RGSet) <- targets$Sample_Name
+  mats <- funnorm_filter_matrices(RGSet, xreactive_file)
+  c(list(targets = targets), mats)
+}
+
+## Batch 2 (meth_081720 IDATs): read.metharray.exp() with NO force. Batch-2
+## targets are built separately by build_batch2_targets() inside build_orse, so
+## only the matrices are returned here.
+build_batch2_matrices <- function(baseDir, xreactive_file) {
+  targets <- minfi::read.metharray.sheet(baseDir)
+  RGSet <- minfi::read.metharray.exp(targets = targets)
+  minfi::sampleNames(RGSet) <- targets$Sample_Name
+  funnorm_filter_matrices(RGSet, xreactive_file)
 }
 
 read_methylation_se <- function(file, manifest, discordant) {
