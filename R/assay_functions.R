@@ -126,17 +126,6 @@ createttargets <- function(targets) {
   ttargets <- targets[targets$T.N == "T", ]
 }
 
-########################
-clean.targets <- function(targets) {
-  samp <- unlist(lapply(strsplit(targets$Sample_Name, "_"), function(x) tail(strsplit(x, split = " ")[[2]], 1)))
-  samp[31] <- "CGPA365T"
-  samp[38] <- "CGST1N"
-  samp[3] <- "CGCRC330T1"
-  targets$Sample_Name <- samp
-  targets$Sample_Name[12] <- "CGOV179T"
-  return(targets)
-}
-
 #####################################
 clean.manifest <- function(man3) {
   colnames(man3) <- c("Sample_type", "Sample_subtype", "Sample_Source", "Sample_Name", "Sample_Origin")
@@ -161,6 +150,18 @@ clean.targets <- function(targets) {
   samp[3] <- "CGCRC330T1"
   targets$Sample_Name <- samp
   targets$Sample_Name[12] <- "CGOV179T"
+  ## CGOV197 sample-sheet T/N mislabel (batch 1, slide 203219720110): the labels
+  ## on wells R06C01 and R07C01 are reversed relative to biology -- R06C01 is the
+  ## NORMAL, R07C01 the TUMOR (confirmed by tumor/normal methylation-centroid
+  ## classification + global hypomethylation, consistent with the WES manifest,
+  ## PGDX4212N vs PGDX4212T1). The published bVals.rds/se.rds already carry these
+  ## correctly (the 2019 build diverged from the raw sheet via RGSet.rds); swap
+  ## the sheet labels here so the from-IDAT reproduction matches published +
+  ## biology. Batch-1 only (batch 2 never calls clean.targets).
+  iN <- which(targets$Sample_Name == "CGOV197N")
+  iT <- which(targets$Sample_Name == "CGOV197T")
+  if (length(iN) == 1L && length(iT) == 1L)
+    targets$Sample_Name[c(iN, iT)] <- targets$Sample_Name[c(iT, iN)]
   return(targets)
 }
 

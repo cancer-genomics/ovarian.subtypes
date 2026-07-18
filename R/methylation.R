@@ -181,7 +181,17 @@ funnorm_filter_matrices <- function(RGSet, xreactive_file) {
 build_batch1_matrices <- function(baseDir, xreactive_file) {
   targets <- minfi::read.metharray.sheet(baseDir)
   RGSet <- minfi::read.metharray.exp(targets = targets, force = TRUE)
-  minfi::sampleNames(RGSet) <- targets$Sample_Name
+  ## The frozen batch-1 bVals.rds/mVals.rds carry CLEANED CG-lab-ID colnames
+  ## (e.g. CGCRC330N, with positional fixes CGCRC330Tl->CGCRC330T1 etc.).
+  ## createseobject() consumes the batch-1 MATRICES already cleaned -- it only
+  ## re-cleans targets1 -- so mergebVals()/mergemVals() align columns by the
+  ## cleaned Sample_Name. Name the matrix columns with clean.targets() here to
+  ## reproduce that invariant; otherwise the raw N_CGID_slide_array names fail
+  ## the match() column selection in mergebVals() ("undefined columns selected").
+  ## The RAW sheet is still returned as `targets` (createseobject cleans it).
+  ## clean.targets() applies POSITIONAL fixes (rows 3/12/31/38), so this relies
+  ## on read.metharray.sheet() preserving the canonical sheet row order.
+  minfi::sampleNames(RGSet) <- clean.targets(targets)$Sample_Name
   mats <- funnorm_filter_matrices(RGSet, xreactive_file)
   c(list(targets = targets), mats)
 }
