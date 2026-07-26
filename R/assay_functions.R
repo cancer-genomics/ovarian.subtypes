@@ -154,7 +154,8 @@ clean.targets <- function(targets) {
   ## on wells R06C01 and R07C01 are reversed relative to biology -- R06C01 is the
   ## NORMAL, R07C01 the TUMOR (confirmed by tumor/normal methylation-centroid
   ## classification + global hypomethylation, consistent with the WES manifest,
-  ## PGDX4212N vs PGDX4212T1). The published bVals.rds/se.rds already carry these
+  ## which independently designates the pair CGOV197N vs CGOV197T the same way).
+  ## The published bVals.rds/se.rds already carry these
   ## correctly (the 2019 build diverged from the raw sheet via RGSet.rds); swap
   ## the sheet labels here so the from-IDAT reproduction matches published +
   ## biology. Batch-1 only (batch 2 never calls clean.targets).
