@@ -11,7 +11,7 @@ figures in:
 The companion analysis repository — including the `targets` pipeline that
 reproduces all manuscript statistics, workflowr analysis pages, and the
 LaTeX manuscript source — is at
-[cancer-genomics/Hallberg2025](https://github.com/cancer-genomics/Hallberg2025).
+[cancer-genomics/hallberg2025](https://github.com/cancer-genomics/hallberg2025).
 
 ## Installation
 

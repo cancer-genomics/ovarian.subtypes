@@ -16,6 +16,69 @@ tar_option_set(packages = c("tidyverse", "here",
 lapply(list.files("R", full.names=TRUE), source)
 ## Columns stripped from published .rda objects before saving (Phase 2, 2026-06-23)
 PHI_COLS <- c("pgdx_id", "bamfile", "bam_local", "size", "genotype_id", "facet_id")
+
+## ---------------------------------------------------------------------------
+## trellis per-sample output directories  (card BASE-01)
+##
+## `directory.listing` is the set of per-sample output directories produced by
+## the trellis run on JHPCE. It is not cosmetic: join_facets_to_manifest2()
+## uses it to assign `facet_id` to the 55 samples that do not appear in
+## ../output/facets/merge-facets-tables.R/all-segments.txt, and `facet_id` is
+## the key add_facets_purity() joins on -- so the published `purity` and
+## `is_na_purity` columns of data/manifest.rda depend on this listing.
+##
+## Two accepted sources, in order:
+##   1. inst/extdata/facets_trellis_directories.txt -- a committed listing, one
+##      directory name per line ('#' comments and blank lines ignored). This is
+##      private (it carries PGDX IDs), which is why it belongs in inst/extdata/.
+##      Its producer is the OsSeqExpData/data-raw Track C reproduction; see
+##      card SEQ-16.
+##   2. ../output/facets-trellis/jhpce_directories/ -- a local mirror of the
+##      JHPCE .temp trees. Untracked and gitignored, so it is absent on a cold
+##      checkout.
+## Neither present is a hard error, not a silent empty listing: an empty
+## listing does not merely lose `facet_id`, it produces a manifest whose
+## `purity` column is wrong.
+read_trellis_directories <- function(listing_file, mirror_dir) {
+  if (file.exists(listing_file)) {
+    x <- trimws(readLines(listing_file, warn = FALSE))
+    x <- x[nzchar(x) & !startsWith(x, "#")]
+    if (length(x) == 0L) {
+      stop("`", listing_file, "` exists but lists no directories.", call. = FALSE)
+    }
+    return(x)
+  }
+  if (dir.exists(mirror_dir)) {
+    x <- as.character(fs::dir_ls(mirror_dir, type = "directory"))
+    if (length(x) == 0L) {
+      stop("`", mirror_dir, "` exists but contains no sample directories. ",
+           "The rsync in code/facets-trellis/sync.sh is a dry run (-nav) and ",
+           "writes nothing; drop the -n to populate it.", call. = FALSE)
+    }
+    return(x)
+  }
+  stop(
+    "the trellis directory listing has no source -- neither of these exists:\n",
+    "    ", listing_file, "\n",
+    "        a committed listing, one trellis sample directory name per line\n",
+    "    ", mirror_dir, "/\n",
+    "        a local mirror of the JHPCE trellis .temp trees\n",
+    "\n",
+    "  What it is: the per-sample output directories of the trellis run, under\n",
+    "    /dcs05/scharpf/data/skoul/Projects/ovarian_subtypes_trellis/outDir/trellis/.temp/\n",
+    "    plus the re-genotyped rerun tree (.../ovarian_subtypes_trellis_rerun_mismatched/).\n",
+    "  Why the pipeline cannot skip it: it assigns facet_id to the 55 samples absent\n",
+    "    from ../output/facets/merge-facets-tables.R/all-segments.txt, and facet_id is\n",
+    "    the join key for sample purity -- so manifest$purity is wrong without it.\n",
+    "  Who produces it: code/facets-trellis/sync.sh mirrors the directory names, but the\n",
+    "    rsync there is a dry run (-nav) and writes nothing. The durable producer is the\n",
+    "    OsSeqExpData/data-raw Track C reproduction -- see card SEQ-16.\n",
+    "  Meanwhile: data/manifest.rda as committed is the authoritative object. This\n",
+    "    pipeline cannot be re-run cold without one of the two sources above.",
+    call. = FALSE
+  )
+}
+## ---------------------------------------------------------------------------
 ##tar_source()
 # tar_source("other_functions.R") # Source other scripts as needed.
 # Replace the target list below with your own:
@@ -33,8 +96,12 @@ list(
                                       "merge-facets-tables.R",
                                       "all-segments.txt")),
     tar_target(facets, read_facets(facets.file)),
-    tar_target(facets.dir, file.path("..", "output", "facets-trellis/jhpce_directories")),
-    tar_target(directory.listing, dir_ls(facets.dir, type="directory")),
+    tar_target(facets.listing.file, file.path("inst", "extdata",
+                                              "facets_trellis_directories.txt")),
+    tar_target(facets.dir, file.path("..", "output", "facets-trellis",
+                                     "jhpce_directories")),
+    tar_target(directory.listing,
+               read_trellis_directories(facets.listing.file, facets.dir)),
     tar_target(manifest2, subject_id2(manifest0)),
     tar_target(cdat2, clean_clinical_data(sdat, manifest2, country_dx_tx)),
     tar_target(manifest.list, clean_manifest(manifest2, cdat2)),
@@ -79,6 +146,30 @@ list(
     tar_target(idat.muc, read_idat(idat.file, muc.manifest, gi.pathways)),
     tar_target(idat.mucinous, order_mucinous(idat.muc, muc.manifest, muc.levels$pathway)),
     tar_target(save.idat.muc, save_object(idat.mucinous, "idat.mucinous")),
+    ##
+    ## Mutational-signature matrices (card BASE-02)
+    ##
+    ## Regenerates the endo/muc COSMIC v2 signature matrices for comparison
+    ## against the committed `../extdata/{endosigs,mucsigs}.rds` (consumed by
+    ## `analysis/ext-figure3.Rmd`). Deliberately NOT wired to save_object() --
+    ## those two files live in the outer repo's root extdata/, not this
+    ## package's data/, and the card that added this target explicitly
+    ## prohibits overwriting the committed .rds files without a manual
+    ## numeric comparison first (see cards/BASE-02-port-mutational-
+    ## signatures.md's Notes/log).
+    ##
+    ## Requires `deconstructSigs` and `BSgenome.Hsapiens.UCSC.hg18`, neither
+    ## of which could be installed in the environment BASE-02 ran in -- both
+    ## reproducibly segfault (dyn.load / R_init_IRanges / R_RegisterCCallable)
+    ## partway through R CMD INSTALL's lazy-load-database step, independent of
+    ## sandboxing, byte-compilation, or renv settings. This is a `tar_make()`-
+    ## time failure until that is resolved elsewhere (or in a different
+    ## environment); it does not affect any other target in this file.
+    tar_target(mutations.file, file.path("..", "extdata", "mutations.tsv"),
+               format = "file"),
+    tar_target(mutations, read_mutations(mutations.file)),
+    tar_target(endosigs, endo_signature_matrix(mutations, manifest)),
+    tar_target(mucsigs, muc_signature_matrix(mutations, manifest)),
     ##
     ## Methylation analyses
     ##

@@ -648,3 +648,180 @@ build_marginal_frequencies <- function(mt, cnv_wes, del, amp) {
   dplyr::bind_rows(mut_marginal, wes_marginal,
                    dplyr::bind_rows(del_marginal, amp_marginal))
 }
+
+## ── mutational-signature computation (BASE-02) ──────────────────────────────
+##
+## Ports `mut.to.sigs.input()` + `whichSignatures()` (package `deconstructSigs`,
+## COSMIC v2 legacy 30-signature reference) forward from the archived 2019
+## script into named functions. See `provenance/signature_matrices_provenance.md`
+## for the full derivation this is based on, and `cards/BASE-02-port-mutational-
+## signatures.md`'s Notes/log for the schema investigation and the environment
+## blocker that has prevented end-to-end verification of this port so far.
+##
+## `extdata/mutations.tsv`'s coordinates are hg18 throughout (see
+## `code/mutations.rmd`'s column-description comment) -- no liftover step is
+## needed, unlike the archived script's mixed-build source table. Use
+## `BSgenome.Hsapiens.UCSC.hg18`, never a different build: trinucleotide
+## context is derived from the genome sequence at each call's coordinates, so
+## the wrong build silently produces wrong signature weights.
+
+#' Parse chr/pos/ref/alt from a mutations.tsv coordinate string
+#'
+#' `mutations.tsv`'s `mutation` column encodes each call in one of two
+#' formats (both documented in `code/mutations.rmd`'s column-description
+#' comment): \code{chrN_start-end_REF_ALT} (the majority; \code{start == end}
+#' for substitutions) or \code{chrN:pos_REF/ALT} (a minority of WGS Strelka
+#' calls). A handful of rows (all from CGCRC254T) match neither and are
+#' returned as \code{NA} rows for the caller to drop.
+#'
+#' @param mutation Character vector, the `mutation` column of
+#'   \code{\link{read_mutations}}'s output.
+#' @export
+parse_mutation_coords <- function(mutation) {
+  fmt_a <- stringr::str_match(
+    mutation, "^chr([0-9XYM]+)_([0-9]+)-[0-9]+_([ACGT])_([ACGT])$"
+  )
+  fmt_b <- stringr::str_match(
+    mutation, "^chr([0-9XYM]+):([0-9]+)_([ACGT])/([ACGT])$"
+  )
+  chr_num <- dplyr::coalesce(fmt_a[, 2], fmt_b[, 2])
+  tibble::tibble(
+    chr = ifelse(is.na(chr_num), NA_character_, paste0("chr", chr_num)),
+    pos = as.integer(dplyr::coalesce(fmt_a[, 3], fmt_b[, 3])),
+    ref = dplyr::coalesce(fmt_a[, 4], fmt_b[, 4]),
+    alt = dplyr::coalesce(fmt_a[, 5], fmt_b[, 5])
+  )
+}
+
+#' Build a deconstructSigs-ready mutation table for one tumor arm
+#'
+#' Filters \code{mutations} to single-base substitutions (deconstructSigs'
+#' trinucleotide-context method is defined for SNVs only; Deletion/Insertion/
+#' Indel/Complex-indel rows are excluded here, matching the archived script's
+#' use of the WES/WGS "Mutation.Position" columns which were substitution-only)
+#' for samples in \code{lab_ids}, parses genomic coordinates, and drops
+#' unparseable rows. Returns the `Sample`/chr/pos/ref/alt columns
+#' \code{deconstructSigs::mut.to.sigs.input()} expects.
+#'
+#' @param mutations Mutation table from \code{\link{read_mutations}}.
+#' @param lab_ids   Character vector of lab IDs defining the tumor arm.
+#' @export
+signature_input_table <- function(mutations, lab_ids) {
+  subs <- dplyr::filter(
+    mutations, tolower(type) == "substitution", lab_id %in% lab_ids
+  )
+  coords <- parse_mutation_coords(subs$mutation)
+  dplyr::bind_cols(lab_id = subs$lab_id, coords) %>%
+    dplyr::filter(!is.na(chr), !is.na(pos), !is.na(ref), !is.na(alt))
+}
+
+#' Fit COSMIC v2 mutational signatures per sample
+#'
+#' Runs \code{deconstructSigs::mut.to.sigs.input()} (hg18 reference) followed
+#' by \code{deconstructSigs::whichSignatures(signatures.ref = signatures.cosmic,
+#' tri.counts.method = "exome")} for every sample in \code{sig_input}, then
+#' assembles the per-sample \code{$weights} into a signatures-by-samples
+#' matrix with all-zero signature rows dropped -- matching the shape of the
+#' committed \code{extdata/{endosigs,mucsigs}.rds} (signatures.cosmic is
+#' bundled reference data shipped with `deconstructSigs`; no external
+#' download needed, but the fitted weights depend on the installed package
+#' version, hence pinning it in `renv.lock`).
+#'
+#' @param sig_input Output of \code{\link{signature_input_table}}.
+#' @export
+fit_mutational_signatures <- function(sig_input) {
+  if (!requireNamespace("deconstructSigs", quietly = TRUE)) {
+    stop(
+      "Package 'deconstructSigs' is required but not installed. See ",
+      "provenance/signature_matrices_provenance.md and cards/BASE-02-port-",
+      "mutational-signatures.md for why this is a real, required dependency ",
+      "(not optional dev tooling) and the environment blocker encountered ",
+      "when installing it.",
+      call. = FALSE
+    )
+  }
+  if (!requireNamespace("BSgenome.Hsapiens.UCSC.hg18", quietly = TRUE)) {
+    stop(
+      "Package 'BSgenome.Hsapiens.UCSC.hg18' is required but not installed. ",
+      "extdata/mutations.tsv uses hg18 coordinates throughout (see ",
+      "code/mutations.rmd's column-description comment) -- do not substitute ",
+      "a different genome build; that would silently produce wrong ",
+      "trinucleotide contexts and wrong signature weights.",
+      call. = FALSE
+    )
+  }
+  bsg <- getExportedValue(
+    "BSgenome.Hsapiens.UCSC.hg18", "BSgenome.Hsapiens.UCSC.hg18"
+  )
+  sigs_input <- deconstructSigs::mut.to.sigs.input(
+    mut.ref   = as.data.frame(sig_input),
+    sample.id = "lab_id",
+    chr       = "chr",
+    pos       = "pos",
+    ref       = "ref",
+    alt       = "alt",
+    bsg       = bsg
+  )
+  signatures_cosmic <- get(
+    "signatures.cosmic", envir = asNamespace("deconstructSigs")
+  )
+  output <- lapply(rownames(sigs_input), function(id) {
+    deconstructSigs::whichSignatures(
+      tumor.ref         = sigs_input,
+      signatures.ref    = signatures_cosmic,
+      sample.id         = id,
+      contexts.needed   = TRUE,
+      tri.counts.method = "exome"
+    )
+  })
+  names(output) <- rownames(sigs_input)
+  weights <- lapply(output, function(x) x$weights)
+  sig_matrix <- t(as.matrix(do.call(rbind, weights)))
+  sig_matrix[rowSums(sig_matrix) > 0, , drop = FALSE]
+}
+
+#' Compute the endometrioid-arm mutational-signature matrix
+#'
+#' Reproduces \code{extdata/endosigs.rds}: filters \code{mutations} to lab IDs
+#' with \code{manifest$tumor_type \%in\% c("ovarian endometrioid", "uterine
+#' endometrioid")}, fits COSMIC v2 signatures per sample via
+#' \code{\link{fit_mutational_signatures}}. See
+#' \code{provenance/signature_matrices_provenance.md} for the full derivation
+#' and known caveats (e.g. CGOV163T's very low mutation count).
+#'
+#' @param mutations Mutation table from \code{\link{read_mutations}}.
+#' @param manifest  Manifest tibble (\code{data/manifest.rda}) with
+#'   \code{lab_id}/\code{tumor_type} columns.
+#' @export
+endo_signature_matrix <- function(mutations, manifest) {
+  lab_ids <- manifest$lab_id[
+    manifest$tumor_type %in% c("ovarian endometrioid", "uterine endometrioid")
+  ]
+  fit_mutational_signatures(signature_input_table(mutations, lab_ids))
+}
+
+#' Compute the mucinous-arm mutational-signature matrix
+#'
+#' Reproduces \code{extdata/mucsigs.rds}: filters \code{mutations} to lab IDs
+#' with \code{manifest$tumor_type \%in\% c("ovarian mucinous", "colorectal",
+#' "pancreas", "stomach")} -- the four tumor types combined in the committed
+#' matrix's columns (CGOV/CGCRC/CGPA/CGST prefixes) -- and fits COSMIC v2
+#' signatures per sample via \code{\link{fit_mutational_signatures}}.
+#'
+#' Note: this uses the raw \code{manifest$tumor_type} values directly rather
+#' than the existing \code{\link{muc}} helper, because \code{muc()} contains
+#' a pre-existing typo ("Pancreaas mucinous") and expects the
+#' \code{\link{cancer_names}}-capitalized vocabulary, neither of which matches
+#' \code{manifest$tumor_type}'s raw lower-case values. See this card's
+#' Notes/log for the full investigation.
+#'
+#' @param mutations Mutation table from \code{\link{read_mutations}}.
+#' @param manifest  Manifest tibble (\code{data/manifest.rda}) with
+#'   \code{lab_id}/\code{tumor_type} columns.
+#' @export
+muc_signature_matrix <- function(mutations, manifest) {
+  lab_ids <- manifest$lab_id[
+    manifest$tumor_type %in% c("ovarian mucinous", "colorectal", "pancreas", "stomach")
+  ]
+  fit_mutational_signatures(signature_input_table(mutations, lab_ids))
+}
