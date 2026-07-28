@@ -825,3 +825,412 @@ muc_signature_matrix <- function(mutations, manifest) {
   ]
   fit_mutational_signatures(signature_input_table(mutations, lab_ids))
 }
+
+## ── Raw mutation-call consolidation (MAN-01) ────────────────────────────────
+##
+## Ports the former `code/mutations.rmd`'s raw-source consolidation forward
+## into named, composable functions. `code/mutations.rmd` now just calls
+## these and writes `output/mutations.rds` / `extdata/mutations.tsv` for
+## anyone who wants the files on disk; the manuscript pipeline's
+## `mutations_tbl` target computes the same table in memory via
+## `build_mutations_tbl()` below, from the raw source files (PGDx/Strelka
+## Excel reports, per-sample Strelka rerun TSVs, and the private manifest),
+## rather than reading the frozen `extdata/mutations.tsv`.
+
+#' WGS tumor samples excluded from the Strelka rerun calls
+#'
+#' These 12 lab IDs are present in both \code{extdata/strelka_reruns/} and
+#' the current manifest, but were absent from the manifest when the original
+#' published analysis (the former \code{02-04-mutations.rmd}) was run.
+#' Including them would add ~1,548 rows to the mutations table and change
+#' the manuscript's published mutation counts. This is a deliberate exclusion
+#' to preserve reproducibility of the published analysis -- **not a bug** --
+#' and a candidate for inclusion in a future manuscript revision.
+#'
+#' @export
+EXCLUDED_STRELKA_RERUN_SAMPLES <- c(
+  "CGOV463T", "CGOV467T", "CGOV469T", "CGOV470T", "CGOV471T", "CGOV474T",
+  "CGOV477T", "CGOV478T", "CGOV480T", "CGOV484T", "CGOV485T", "CGOV487T"
+)
+
+#' Patch the CGPA367T rows in the PGDx Excel report
+#'
+#' \code{pgdx-compiled.xlsx} has shifted Type/Consequence/Context/MAF columns
+#' for the report rows belonging to lab ID CGPA367T. Correct values were
+#' verified against the archived \code{pgdx-compiled-patched.xlsx} (no longer
+#' on disk). The affected rows are identified via a \code{manifest$lab_id}
+#' lookup rather than a hardcoded vendor ID, so no vendor IDs appear in this
+#' file (card \code{REL-01}).
+#'
+#' @param pgdx PGDx report tibble (must have \code{Prefix} and \code{Gene}
+#'   columns).
+#' @param manifest Private manifest tibble with \code{pgdx_id}/\code{lab_id}
+#'   columns (\code{ovarian.subtypes/inst/extdata/manifest.rds}).
+#' @export
+patch_cgpa367t <- function(pgdx, manifest) {
+  bad_id <- manifest$pgdx_id[manifest$lab_id == "CGPA367T"]
+  stopifnot(length(bad_id) == 1L, !is.na(bad_id))
+  patch <- tibble::tibble(
+    Gene        = c("FRMD4B", "GGN",    "GNAQ",   "GRIK1"),
+    Type        = "Substitution",
+    Consequence = c("Nonsynonymous coding", "Nonsynonymous coding",
+                    "Nonsynonymous coding", "Nonsense"),
+    Context     = c("AAGTCNTTGCT", "GGGCCNGGTCG", "GAGTGNGTCCA", "AGGTTNATGTG"),
+    MAF         = c(0.277778, 0.138889, 0.192308, 0.153846)
+  )
+  bad_rows <- grepl(bad_id, pgdx$Prefix, fixed = TRUE)
+  stopifnot(sum(bad_rows) == nrow(patch))
+  pgdx[bad_rows, c("Type", "Consequence", "Context", "MAF")] <-
+    patch[match(pgdx$Gene[bad_rows], patch$Gene),
+          c("Type", "Consequence", "Context", "MAF")]
+  pgdx
+}
+
+#' Read and combine the PGDx and original-Strelka mutation-call Excel reports
+#'
+#' @param report_dir Directory containing \code{pgdx-compiled.xlsx} and
+#'   \code{strelka-compiled.xlsx} (\code{extdata/mutation_reports}).
+#' @param manifest Private manifest tibble (needed for the CGPA367T patch,
+#'   see \code{\link{patch_cgpa367t}}).
+#' @export
+read_mutation_reports <- function(report_dir, manifest) {
+  pgdx <- readxl::read_excel(file.path(report_dir, "pgdx-compiled.xlsx"), sheet = 1) %>%
+    dplyr::select(-c("Original Nuc Change", "Original Coordinates")) %>%
+    dplyr::mutate(caller = "PGDx")
+  pgdx <- patch_cgpa367t(pgdx, manifest)
+
+  strelka <- readxl::read_excel(file.path(report_dir, "strelka-compiled.xlsx"), sheet = 1) %>%
+    dplyr::select(c("Prefix", "PGDx-like Change ID",
+                    "Type", "Annotation", "Context",
+                    "Gene Name",
+                    "Feature ID (CCDS)", "HGVS.c",
+                    "Tumor Distinct Read Depth (tier1)",
+                    "Normal Distinct Read Depth (tier1)")) %>%
+    dplyr::mutate(
+      MAF = `Tumor Distinct Read Depth (tier1)` / `Normal Distinct Read Depth (tier1)`,
+      MAF = round(MAF, 3)
+    ) %>%
+    dplyr::select(-c(`Tumor Distinct Read Depth (tier1)`,
+                     `Normal Distinct Read Depth (tier1)`)) %>%
+    dplyr::rename(
+      `hg18 Nuc Change` = `PGDx-like Change ID`,
+      CCDS              = `Feature ID (CCDS)`,
+      `AA Change`       = "HGVS.c",
+      Gene              = `Gene Name`,
+      Consequence       = Annotation
+    ) %>%
+    dplyr::mutate(caller = "Strelka") %>%
+    dplyr::select(colnames(pgdx))
+
+  dplyr::bind_rows(pgdx, strelka)
+}
+
+#' Root a PGDx report \code{Prefix} string down to its manifest-matchable form
+#' @keywords internal
+mutation_report_root_id <- function(x) {
+  tmp <- strsplit(x, "_Cancer")
+  nm  <- sapply(tmp, "[", 1)
+  stringr::str_replace_all(nm, "WGS_Ex", "WGS")
+}
+
+#' Match PGDx-prefixed report rows to the manifest's \code{pgdx_id}
+#'
+#' Splits \code{combined} into PGDx-prefixed (\code{Prefix} starting with
+#' \code{P}/\code{L}/\code{V}) and non-PGDx-prefixed rows. For the
+#' PGDx-prefixed rows, resolves each \code{Prefix}'s manifest \code{pgdx_id}
+#' via a chain of successive heuristics -- the report \code{Prefix} strings
+#' do not match the manifest's \code{pgdx_id} verbatim.
+#'
+#' @param combined Combined PGDx + Strelka report tibble from
+#'   \code{\link{read_mutation_reports}}.
+#' @param manifest Private manifest tibble.
+#' @return List with \code{pgdx} (matched, \code{is_pgdx = TRUE}, has
+#'   \code{pgdx_id}) and \code{notpgdx} (\code{is_pgdx = FALSE}) tibbles.
+#' @export
+match_pgdx_ids <- function(combined, manifest) {
+  combined.pgdx <- dplyr::filter(combined, grepl("^[PLV]", Prefix)) %>%
+    dplyr::mutate(root = mutation_report_root_id(Prefix),
+                  root = stringr::str_replace_all(root, "__", ""))
+
+  x          <- dplyr::select(combined.pgdx, root, Prefix) %>% dplyr::distinct()
+  notmatched <- dplyr::filter(x, !root %in% manifest$pgdx_id)
+  matched    <- dplyr::filter(x,  root %in% manifest$pgdx_id)
+
+  newid <- rep(NA, nrow(notmatched))
+  for (i in seq_len(nrow(notmatched))) {
+    tmp <- strsplit(notmatched$root[i], "_")[[1]][1]
+    ix  <- grep(tmp, manifest$pgdx_id)
+    if (length(ix) > 1) {
+      ix <- ix[grep("[0-9]T", manifest$pgdx_id[ix])]
+      if (length(ix) > 1) stop("Still more than one hit")
+    }
+    if (length(ix) == 0) {
+      if (grepl("^LP", tmp)) {
+        lp.ids <- manifest$pgdx_id[grep("^LP", manifest$pgdx_id)]
+        tmp    <- paste0(notmatched$root[i], "_WGS")
+        ix     <- match(tmp, lp.ids)
+        if (length(ix) == 0) ix <- match(tmp, manifest$pgdx_id)
+        if (is.na(ix)) {
+          tmp <- stringr::str_replace(tmp, "LP600", "LP00")
+          ix  <- match(tmp, manifest$pgdx_id)
+        }
+      }
+    }
+    if (length(ix) == 0) {
+      tmp <- stringr::str_replace(notmatched$root[i], "2WGS", "2_WGS")
+      ix  <- match(tmp, manifest$pgdx_id)
+    }
+    if (is.na(manifest$pgdx_id[ix])) {
+      tmp <- stringr::str_replace(tmp, "^Victor_", "")
+      tmp <- stringr::str_replace(tmp, "_hg19", "")
+      ix  <- match(tmp, manifest$pgdx_id)
+    }
+    newid[i] <- manifest$pgdx_id[ix]
+  }
+
+  matched$root2    <- matched$root
+  notmatched$root2 <- newid
+  x2 <- dplyr::bind_rows(matched, notmatched) %>%
+    dplyr::select(-root) %>%
+    dplyr::rename(pgdx_id = root2)
+
+  combined.pgdx2   <- dplyr::left_join(combined.pgdx, x2, by = "Prefix") %>%
+    dplyr::mutate(is_pgdx = TRUE)
+  combined.notpgdx <- dplyr::filter(combined, !grepl("^[PLV]", Prefix)) %>%
+    dplyr::mutate(is_pgdx = FALSE)
+
+  list(pgdx = combined.pgdx2, notpgdx = combined.notpgdx)
+}
+
+#' Tumor-sample BAM basename lookup table derived from the manifest
+#' @keywords internal
+tumor_bam_lookup <- function(manifest) {
+  dplyr::select(manifest, subject_id, lab_id, bam_local, tumor.normal, platform) %>%
+    dplyr::filter(tumor.normal == "tumor") %>%
+    dplyr::mutate(bam = basename(bam_local)) %>%
+    dplyr::select(-bam_local)
+}
+
+#' Join mutation-report rows to the manifest for subject/lab IDs
+#'
+#' Joins the PGDx-matched rows (via \code{pgdx_id}) and non-PGDx rows (via
+#' \code{Prefix == lab_id}) to the manifest, then, for any report rows that
+#' still fail to match (some non-PGDx rows carry a BAM-filename-derived
+#' \code{Prefix} rather than a lab ID -- two of these also carry a trailing
+#' run suffix absent from the BAM filename), resolves the match via the BAM
+#' basename instead.
+#'
+#' @param matched_ids Output of \code{\link{match_pgdx_ids}} (list with
+#'   \code{pgdx}/\code{notpgdx} elements).
+#' @param manifest Private manifest tibble.
+#' @export
+join_mutation_manifest <- function(matched_ids, manifest) {
+  manifest2 <- dplyr::select(manifest, subject_id, lab_id, pgdx_id,
+                             tumor.normal, platform) %>%
+    dplyr::filter(tumor.normal == "tumor")
+
+  m <- tumor_bam_lookup(manifest)
+
+  merged1       <- dplyr::left_join(matched_ids$pgdx,    manifest2, by = "pgdx_id")
+  merged2       <- dplyr::left_join(matched_ids$notpgdx, manifest2, by = c("Prefix" = "lab_id"))
+  merge.attempt <- dplyr::bind_rows(merged1, merged2)
+
+  merged     <- dplyr::filter(merge.attempt, !is.na(subject_id))
+  not.merged <- dplyr::filter(merge.attempt,  is.na(subject_id))
+
+  todo <- dplyr::select(not.merged, Prefix, root) %>%
+    dplyr::distinct() %>%
+    dplyr::mutate(bam = NA)
+
+  for (i in seq_len(nrow(todo))) {
+    if (!is.na(todo$root[i])) {
+      ## Two report prefixes carry a trailing run suffix ("_" or "_A") that
+      ## is absent from the BAM filename; strip it so the grep below
+      ## resolves. Equivalent to the former hardcoded lookup: of the 14
+      ## roots reaching this loop, only those two end in "_" or "_A".
+      todo$root[i] <- stringr::str_replace(todo$root[i], "_A?$", "")
+      ix <- grep(todo$root[i], m$bam)
+      if (length(ix) != 1) stop()
+      todo$bam[i] <- m$bam[ix]
+    }
+  }
+  todo <- dplyr::left_join(todo, m, by = "bam")
+
+  not.merged2 <- dplyr::left_join(
+    dplyr::select(not.merged, -c(subject_id, lab_id, tumor.normal, platform)),
+    todo, by = c("Prefix", "root")
+  ) %>%
+    dplyr::select(-bam) %>%
+    dplyr::select(colnames(merged))
+
+  dplyr::bind_rows(merged, not.merged2) %>% dplyr::arrange(platform)
+}
+
+#' Fill in \code{lab_id} for report rows the manifest join left missing
+#'
+#' A handful of rows join to a subject/platform via BAM matching but still
+#' have no \code{lab_id} (the manifest's \code{lab_id} column is \code{NA}
+#' for that BAM); for those, the report's own \code{Prefix} value serves as
+#' \code{lab_id} directly.
+#'
+#' @param merged_original Output of \code{\link{join_mutation_manifest}}.
+#' @param manifest Private manifest tibble.
+#' @export
+fix_missing_lab_id <- function(merged_original, manifest) {
+  missing.lab <- dplyr::filter(merged_original,  is.na(merged_original$lab_id))
+  notmissing  <- dplyr::filter(merged_original, !is.na(merged_original$lab_id))
+
+  m <- tumor_bam_lookup(manifest)
+
+  missing.lab2 <- dplyr::select(missing.lab, -c(subject_id, lab_id, tumor.normal, platform)) %>%
+    dplyr::mutate(lab_id = Prefix)
+  missing.lab3 <- dplyr::left_join(missing.lab2, m, by = "lab_id") %>%
+    dplyr::select(colnames(notmissing))
+
+  dplyr::bind_rows(notmissing, missing.lab3)
+}
+
+#' Read per-sample Strelka rerun TSVs
+#'
+#' Files are individual per-sample Strelka rerun reports, rsynced from
+#' \code{/dcs05/scharpf/data/skoul/Projects/ovarian_subtypes_strelka/strelka-pipeline/outDir/Reports/filtered/}
+#' into \code{extdata/strelka_reruns/} (one
+#' \code{<lab_id>.small_variants_plv0.1.12_filtered.txt} file per lab ID).
+#'
+#' @param rerun_dir Directory of per-sample Strelka rerun TSVs
+#'   (\code{extdata/strelka_reruns}).
+#' @param manifest Private manifest tibble (restricts to lab IDs present in
+#'   the manifest).
+#' @export
+read_strelka_reruns <- function(rerun_dir, manifest) {
+  reports <- list.files(rerun_dir, full.names = TRUE)
+
+  read_one_report <- function(fname) {
+    tmp        <- readr::read_tsv(fname, show_col_types = FALSE)
+    tmp$lab_id <- strsplit(basename(fname), "\\.")[[1]][1]
+    tmp
+  }
+
+  purrr::map_dfr(reports, read_one_report) %>%
+    dplyr::select(c(lab_id,
+                    "Variant (hg18)", "Type", "Annotation", "Context",
+                    "Gene Name", "Feature ID (CCDS)", "HGVS.c",
+                    "Tumor Distinct Read Depth (tier1)",
+                    "Normal Distinct Read Depth (tier1)")) %>%
+    dplyr::mutate(
+      MAF = `Tumor Distinct Read Depth (tier1)` / `Normal Distinct Read Depth (tier1)`,
+      MAF = round(MAF, 3)
+    ) %>%
+    dplyr::select(-c(`Tumor Distinct Read Depth (tier1)`,
+                     `Normal Distinct Read Depth (tier1)`)) %>%
+    dplyr::rename(
+      `hg18 Nuc Change` = `Variant (hg18)`,
+      CCDS              = `Feature ID (CCDS)`,
+      `AA Change`       = "HGVS.c",
+      Gene              = `Gene Name`,
+      Consequence       = Annotation
+    ) %>%
+    dplyr::mutate(caller = "Strelka", platform = "WGS") %>%
+    dplyr::filter(lab_id %in% manifest$lab_id)
+}
+
+#' Replace original Strelka calls with rerun calls for corrected samples
+#'
+#' Excludes \code{\link{EXCLUDED_STRELKA_RERUN_SAMPLES}} from the rerun calls
+#' (12 WGS tumor samples absent from the manifest when the original
+#' published analysis was run; see that constant's documentation), then, for
+#' every remaining rerun sample, drops its original calls and substitutes the
+#' rerun's.
+#'
+#' @param mut_original Output of \code{\link{fix_missing_lab_id}}.
+#' @param mut_rerun Output of \code{\link{read_strelka_reruns}}.
+#' @export
+integrate_mutation_calls <- function(mut_original, mut_rerun) {
+  mut_rerun <- dplyr::filter(mut_rerun, !lab_id %in% EXCLUDED_STRELKA_RERUN_SAMPLES)
+
+  dplyr::select(mut_original, colnames(mut_rerun)) %>%
+    dplyr::filter(!lab_id %in% EXCLUDED_STRELKA_RERUN_SAMPLES) %>%
+    dplyr::filter(!lab_id %in% mut_rerun$lab_id) %>%
+    dplyr::bind_rows(mut_rerun)
+}
+
+#' Consolidate PGDx + Strelka (original & rerun) mutation calls
+#'
+#' Top-level orchestrator that reproduces the former \code{code/mutations.rmd}'s
+#' \code{mutations} object (the table saved to \code{output/mutations.rds})
+#' from raw sources: the PGDx/Strelka Excel reports, the per-sample Strelka
+#' rerun TSVs, and the private manifest. Composes, in order,
+#' \code{\link{read_mutation_reports}}, \code{\link{match_pgdx_ids}},
+#' \code{\link{join_mutation_manifest}}, \code{\link{fix_missing_lab_id}},
+#' \code{\link{read_strelka_reruns}}, and \code{\link{integrate_mutation_calls}}
+#' (which applies \code{\link{EXCLUDED_STRELKA_RERUN_SAMPLES}}).
+#'
+#' @param report_dir Directory with \code{pgdx-compiled.xlsx}/
+#'   \code{strelka-compiled.xlsx} (\code{extdata/mutation_reports}).
+#' @param rerun_dir Directory of per-sample Strelka rerun TSVs
+#'   (\code{extdata/strelka_reruns}).
+#' @param manifest Private manifest tibble
+#'   (\code{ovarian.subtypes/inst/extdata/manifest.rds}, loaded directly --
+#'   **not** \code{\link{get_manifest}}'s PHI-stripped \code{data(manifest)},
+#'   which lacks the \code{pgdx_id}/\code{bam_local} columns this port needs).
+#' @export
+consolidate_mutation_calls <- function(report_dir, rerun_dir, manifest) {
+  combined     <- read_mutation_reports(report_dir, manifest)
+  matched_ids  <- match_pgdx_ids(combined, manifest)
+  merged_orig  <- join_mutation_manifest(matched_ids, manifest)
+  mut_original <- fix_missing_lab_id(merged_orig, manifest)
+  mut_rerun    <- read_strelka_reruns(rerun_dir, manifest)
+  integrate_mutation_calls(mut_original, mut_rerun)
+}
+
+#' Format the consolidated mutations table for the canonical TSV export
+#'
+#' Drops rows with no platform (unmatched/ambiguous report rows) and renames
+#' to the canonical \code{extdata/mutations.tsv} column names. See the
+#' provenance comment in \code{code/mutations.rmd} for full column
+#' documentation.
+#'
+#' \code{write_tsv()}/\code{read_tsv()}'s round trip -- the path
+#' \code{\link{read_mutations}} has always used to serve this table -- treats
+#' readr's default missing-value markers (\code{""} and the literal string
+#' \code{"NA"}) as true \code{NA} on read-back. \code{aa_change} (sourced from
+#' the report's \code{HGVS.c} column) is the one column where the raw report
+#' data currently contains that literal string rather than a genuine missing
+#' value, so it is normalized here to match \code{read_mutations()}'s existing,
+#' already-in-production behavior -- this in-memory path must return the exact
+#' same table \code{read_mutations(extdata/mutations.tsv)} has always returned.
+#'
+#' @param mutations Output of \code{\link{consolidate_mutation_calls}}.
+#' @export
+format_mutations_export <- function(mutations) {
+  dplyr::filter(mutations, !is.na(platform)) %>%
+    dplyr::select(
+      lab_id,
+      mutation    = `hg18 Nuc Change`,
+      gene        = Gene,
+      ccds        = CCDS,
+      aa_change   = `AA Change`,
+      type        = Type,
+      consequence = Consequence,
+      context     = Context,
+      maf         = MAF,
+      caller,
+      platform
+    ) %>%
+    dplyr::mutate(dplyr::across(dplyr::where(is.character), ~ dplyr::na_if(.x, "NA")))
+}
+
+#' Consolidate and format mutation calls into the canonical export shape
+#'
+#' Composes \code{\link{consolidate_mutation_calls}} with
+#' \code{\link{format_mutations_export}} to produce the table in the exact
+#' column layout of \code{extdata/mutations.tsv} -- the shape
+#' \code{\link{read_mutations}} returns when reading that file from disk.
+#' Used by the manuscript pipeline's \code{mutations_tbl} target to compute
+#' the table in memory rather than reading the frozen TSV file.
+#'
+#' @inheritParams consolidate_mutation_calls
+#' @export
+build_mutations_tbl <- function(report_dir, rerun_dir, manifest) {
+  format_mutations_export(consolidate_mutation_calls(report_dir, rerun_dir, manifest))
+}
