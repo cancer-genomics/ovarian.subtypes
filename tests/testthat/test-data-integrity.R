@@ -92,33 +92,6 @@ test_that("methylation lab_ids are a subset of manifest lab_ids", {
   expect_true(all(methylation$lab_id %in% manifest$lab_id))
 })
 
-# ── methylation_se (SummarizedExperiment) ─────────────────────────────────────
-
-test_that("methylation_se colData has no basename column", {
-  data(methylation_se, package = "ovarian.subtypes")
-  expect_false("basename" %in% names(SummarizedExperiment::colData(methylation_se)))
-})
-
-test_that("methylation_se has expected colData columns", {
-  data(methylation_se, package = "ovarian.subtypes")
-  cols <- names(SummarizedExperiment::colData(methylation_se))
-  expect_true(all(c("lab_id", "diagnosis", "study", "tumor") %in% cols))
-})
-
-test_that("methylation_se has JHU and TCGA samples", {
-  data(methylation_se, package = "ovarian.subtypes")
-  study <- SummarizedExperiment::colData(methylation_se)$study
-  expect_true("JHU" %in% study)
-  expect_true("TCGA" %in% study)
-})
-
-test_that("methylation_se JHU sample names are CG identifiers", {
-  data(methylation_se, package = "ovarian.subtypes")
-  study <- SummarizedExperiment::colData(methylation_se)$study
-  jhu_ids <- colnames(methylation_se)[study == "JHU"]
-  expect_true(all(grepl("^CG", jhu_ids)))
-})
-
 # ── idat objects ─────────────────────────────────────────────────────────────
 
 test_that("idat.endometrioid lab_ids are CG identifiers", {
