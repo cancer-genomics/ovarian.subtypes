@@ -176,27 +176,5 @@ list(
     tar_target(meth.file, file.path("..", "output", "methylation.Rmd", "se.rds")),
     tar_target(methylation, read_methylation_se(meth.file, manifest, discordant)),
     tar_target(save.meth,
-               save_object(select(methylation, -any_of(PHI_COLS)), "methylation")),
-    ## summarized experiment
-    tar_target(tcga.file, file.path("..", "extdata", "se_lab_tcga.rds")),
-    tar_target(metadata.file, file.path("..", "extdata", "combmetadata.rds")),
-    tar_target(meth.se, read_methylation_data(metadata.file, tcga.file)),
-    tar_target(methylation_se_pre, check_against_manifest(meth.se, manifest, discordant)),
-    tar_target(match.file, file.path("inst", "extdata", "match_table.csv"),
-               format="file"),
-    tar_target(match_table, read.csv(match.file)),
-    ##trace(update_tcga_barcodes, browser)
-    tar_target(methylation_se_with_signet, update_tcga_barcodes(methylation_se_pre, match_table)),
-    tar_target(signet.file, file.path("inst", "extdata", "stomach_muc_signet.csv"),
-               format="file"),
-    tar_target(signet.cases, get_signetring(signet.file, match_table)),
-    tar_target(methylation_se, drop_signet(methylation_se_with_signet,
-                                           signet.file,
-                                           match_table)),
-    ## Drop signet ring cases
-    tar_target(save.meth.se, {
-               se <- methylation_se
-               colData(se) <- colData(se)[, setdiff(colnames(colData(se)), "basename")]
-               save_object(se, "methylation_se")
-               })
+               save_object(select(methylation, -any_of(PHI_COLS)), "methylation"))
 )
