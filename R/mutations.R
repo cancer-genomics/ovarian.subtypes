@@ -865,7 +865,7 @@ EXCLUDED_STRELKA_RERUN_SAMPLES <- c(
 #' @param pgdx PGDx report tibble (must have \code{Prefix} and \code{Gene}
 #'   columns).
 #' @param manifest Private manifest tibble with \code{pgdx_id}/\code{lab_id}
-#'   columns (\code{ovarian.subtypes/inst/extdata/manifest.rds}).
+#'   columns (\code{hallberg2025.base/inst/extdata/manifest.rds}).
 #' @export
 patch_cgpa367t <- function(pgdx, manifest) {
   bad_id <- manifest$pgdx_id[manifest$lab_id == "CGPA367T"]
@@ -1170,7 +1170,7 @@ integrate_mutation_calls <- function(mut_original, mut_rerun) {
 #' @param rerun_dir Directory of per-sample Strelka rerun TSVs
 #'   (\code{extdata/strelka_reruns}).
 #' @param manifest Private manifest tibble
-#'   (\code{ovarian.subtypes/inst/extdata/manifest.rds}, loaded directly --
+#'   (\code{hallberg2025.base/inst/extdata/manifest.rds}, loaded directly --
 #'   **not** \code{\link{get_manifest}}'s PHI-stripped \code{data(manifest)},
 #'   which lacks the \code{pgdx_id}/\code{bam_local} columns this port needs).
 #' @export

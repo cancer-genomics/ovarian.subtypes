@@ -8,7 +8,7 @@
 ## why they could not be installed in the environment this port was written
 ## in) rather than faked.
 
-library(ovarian.subtypes)
+library(hallberg2025.base)
 library(tibble)
 library(dplyr)
 
@@ -105,7 +105,7 @@ test_that("endo/muc signature matrices reproduce committed extdata files", {
   skip_if_not_installed("deconstructSigs")
   skip_if_not_installed("BSgenome.Hsapiens.UCSC.hg18")
   skip_if_not(
-    file.exists(system.file("..", "..", "extdata", "mutations.tsv", package = "ovarian.subtypes")),
+    file.exists(system.file("..", "..", "extdata", "mutations.tsv", package = "hallberg2025.base")),
     "extdata/mutations.tsv not found relative to package root"
   )
   ## Intentionally left as a skip-only placeholder: a full run + numeric

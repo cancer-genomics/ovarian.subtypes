@@ -1,6 +1,6 @@
 ## Unit tests for pure utility functions (no external data required).
 
-library(ovarian.subtypes)
+library(hallberg2025.base)
 library(tibble)
 library(dplyr)
 

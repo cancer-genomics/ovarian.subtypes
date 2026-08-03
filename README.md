@@ -1,4 +1,4 @@
-# ovarian.subtypes
+# hallberg2025.base
 
 An R package providing functions and data for reproducing the numeric results and
 figures in:
@@ -16,7 +16,7 @@ LaTeX manuscript source — is at
 ## Installation
 
 ```r
-remotes::install_github("cancer-genomics/ovarian.subtypes")
+remotes::install_github("cancer-genomics/hallberg2025.base")
 ```
 
 ## Data

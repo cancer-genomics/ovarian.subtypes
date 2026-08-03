@@ -1,3 +1,3 @@
 library(testthat)
-library(ovarian.subtypes)
-test_check("ovarian.subtypes")
+library(hallberg2025.base)
+test_check("hallberg2025.base")

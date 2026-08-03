@@ -594,6 +594,6 @@ purity_filter <- function(manifest, threshold = 0.2) {
 
 #' @export
 get_manifest <- function() {
-  data(manifest, package = "ovarian.subtypes", envir = environment())
+  data(manifest, package = "hallberg2025.base", envir = environment())
   manifest
 }
