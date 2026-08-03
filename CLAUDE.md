@@ -1,23 +1,23 @@
-# ovarian.subtypes — the shared base package
+# hallberg2025.base — the shared base package
 
 **This is the one shared-context module.** Both companion data packages depend on it; it
 imports neither. Anything you change here can invalidate the sequencing arm, the
 methylation arm, and the manuscript pipeline at once — which is why `BASE` cards are
 marked `exclusive: true` and run alone.
 
-It has its own git repository (remote `cancer-genomics/ovarian.subtypes`) and is gitignored
+It has its own git repository (remote `cancer-genomics/hallberg2025.base`) and is gitignored
 by the outer repo. Commits land in both.
 
 ## The package pipeline
 
-`ovarian.subtypes/_targets.R` (58 targets) builds the analytic datasets from raw inputs in
+`hallberg2025.base/_targets.R` (58 targets) builds the analytic datasets from raw inputs in
 `inst/extdata/` (`manifest.rds`, `sdat.rds`, `center_info.csv`,
 `diagnosis_surgery_dates.csv`) plus `../output/facets*` text files, producing `manifest`,
 `clinical`, `discordant`, `idat.*`, `methylation_se`. Run it **from inside this
 directory**. It writes `.rda` via `save_object()` with `PHI_COLS` stripped.
 
 This is distinct from the *manuscript* pipeline (`_targets.R` at the repo root), which
-consumes this package's data plus one `OsSeqExpData` accessor.
+consumes this package's data plus one `hallberg2025.seq.data` accessor.
 
 ## `data/` vs `inst/extdata/` — the contract
 
@@ -49,8 +49,8 @@ the bug — not the committed file. The stripped-column table is in the root `CL
 | `functions.R` | 8 | vestigial stub from the Phase-2 split |
 
 `ampliconGraph`, `gg_blank`, `load_tx`, `plot_circos_grob`, `segs_to_granges` are the five
-functions `OsSeqExpData/data-raw` reaches into. Changing any of their signatures breaks
-the sequencing arm silently — it calls them with `ovarian.subtypes::`, so there is no
+functions `hallberg2025.seq.data/data-raw` reaches into. Changing any of their signatures breaks
+the sequencing arm silently — it calls them with `hallberg2025.base::`, so there is no
 import-time check.
 
 ## Known defect
